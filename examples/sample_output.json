@@ -1,0 +1,272 @@
+{
+  "seller": {
+    "name": "RAAJARAM & CO",
+    "address_lines": [],
+    "city": null,
+    "state": null,
+    "state_code": "32",
+    "pin": null,
+    "phone": "6282772085",
+    "email": "info@raajaram.com",
+    "gstin": "32ABKFR5951J1ZV"
+  },
+  "bill_to": {
+    "name": "Soubhagya Silks",
+    "address_lines": [
+      "627",
+      "Edakkara,",
+      "Malappuram",
+      "Kerala, State Code: 32",
+      "PIN Code: 679331",
+      "India",
+      "Phone: 6282772085",
+      "GSTIN: 32ARBPJ2182L1ZX"
+    ],
+    "city": null,
+    "state": null,
+    "state_code": "32",
+    "pin": "679331",
+    "phone": "6282772085",
+    "email": null,
+    "gstin": "32ARBPJ2182L1ZX"
+  },
+  "ship_to": {
+    "name": "Soubhagya Silks",
+    "address_lines": [
+      "627",
+      "Edakkara,",
+      "Malappuram",
+      "Kerala, State Code: 32",
+      "PIN Code: 679331",
+      "India",
+      "Phone: 6282772085",
+      "GSTIN: 32ARBPJ2182L1ZX"
+    ],
+    "city": null,
+    "state": null,
+    "state_code": "32",
+    "pin": "679331",
+    "phone": "6282772085",
+    "email": null,
+    "gstin": "32ARBPJ2182L1ZX"
+  },
+  "invoice_no": "RR-25-26-00306",
+  "invoice_date": "22-08-2025",
+  "transporter": "KRS",
+  "destination": "Edakkara",
+  "lr_no": null,
+  "agent": null,
+  "doc_no": "1",
+  "packet_no": null,
+  "line_items": [
+    {
+      "sln": "1",
+      "group_item": "MAJOR-HS M",
+      "description": "MAJOR-HS M",
+      "hsn_code": "62052000",
+      "mrp": 685.0,
+      "rate": 440.0,
+      "qty": 2.0,
+      "uom": "Nos",
+      "value": 880.0
+    },
+    {
+      "sln": "2",
+      "group_item": "MAJOR-HS L",
+      "description": "MAJOR-HS L",
+      "hsn_code": "62052000",
+      "mrp": 685.0,
+      "rate": 440.0,
+      "qty": 2.0,
+      "uom": "Nos",
+      "value": 880.0
+    },
+    {
+      "sln": "3",
+      "group_item": "MAJOR-HS XL",
+      "description": "MAJOR-HS XL",
+      "hsn_code": "62052000",
+      "mrp": 685.0,
+      "rate": 440.0,
+      "qty": 2.0,
+      "uom": "Nos",
+      "value": 880.0
+    },
+    {
+      "sln": "4",
+      "group_item": "MAJOR-HS XXL",
+      "description": "MAJOR-HS XXL",
+      "hsn_code": "62052000",
+      "mrp": 685.0,
+      "rate": 440.0,
+      "qty": 3.0,
+      "uom": "Nos",
+      "value": 1320.0
+    },
+    {
+      "sln": "5",
+      "group_item": "MAJOR-FS M",
+      "description": "MAJOR-FS M",
+      "hsn_code": "62052000",
+      "mrp": 685.0,
+      "rate": 440.0,
+      "qty": 5.0,
+      "uom": "Nos",
+      "value": 2200.0
+    },
+    {
+      "sln": "6",
+      "group_item": "MAJOR-FS L",
+      "description": "MAJOR-FS L",
+      "hsn_code": "62052000",
+      "mrp": 685.0,
+      "rate": 440.0,
+      "qty": 5.0,
+      "uom": "Nos",
+      "value": 2200.0
+    },
+    {
+      "sln": "7",
+      "group_item": "MAJOR-FS XL",
+      "description": "MAJOR-FS XL",
+      "hsn_code": "62052000",
+      "mrp": 685.0,
+      "rate": 440.0,
+      "qty": 3.0,
+      "uom": "Nos",
+      "value": 1320.0
+    },
+    {
+      "sln": "8",
+      "group_item": "MAJOR-FS XXL",
+      "description": "MAJOR-FS XXL",
+      "hsn_code": "62052000",
+      "mrp": 685.0,
+      "rate": 440.0,
+      "qty": 3.0,
+      "uom": "Nos",
+      "value": 1320.0
+    }
+  ],
+  "tax_summary": [
+    {
+      "hsn_sac": "62052000",
+      "taxable_amount": 10560.0,
+      "cgst_rate": 2.5,
+      "cgst_amount": 264.0,
+      "sgst_rate": 2.5,
+      "sgst_amount": 264.0,
+      "igst_rate": null,
+      "igst_amount": null
+    }
+  ],
+  "totals": {
+    "total_qty": 24.0,
+    "taxable_amount": 10560.0,
+    "sgst": 264.0,
+    "cgst": 264.0,
+    "igst": null,
+    "grand_total": 11088.0
+  },
+  "amount_in_words": "INR Eleven Thousand And Eighty Eight only.",
+  "challan_no": "DN-25-00318",
+  "so_no": "RO-25-26-00310",
+  "prepared_by": "Arun.R",
+  "checked_by": "VISHNU",
+  "delivered_by": "VISHNU",
+  "raw": {
+    "markdown": "RAAJARAM & CO\nKuthampully\nThrissur, Kerala - 680594, India\nGSTIN: 32ABKFR5951J1ZV\nContact: 04884 209990 | +91 99477 99887\nEmail: info@raajaram.com\nTax Invoice\nDate : 22-08-2025\nInvoice No : RR-25-26-00306\nBill To : Soubhagya Silks\n627\nEdakkara,\nMalappuram\nKerala, State Code: 32\nPIN Code: 679331\nIndia\nPhone: 6282772085\nGSTIN: 32ARBPJ2182L1ZX\nShip To : Soubhagya Silks\n627\nEdakkara,\nMalappuram\nKerala, State Code: 32\nPIN Code: 679331\nIndia\nPhone: 6282772085\nGSTIN: 32ARBPJ2182L1ZX\nTransporter : KRS\nDestination : Edakkara\nLR No :\nAgent :\nDoc No : 1\nPacket No :\nTotal 24 10,560.00\nState GST (SGST) [ @ 2.500% on 10560.00 ] 264.00\nCentral GST (CGST) [ @ 2.500% on 10560.00 ] 264.00\nGrand Total 11,088.00\nAmount In Words : INR Eleven Thousand And Eighty Eight only.\nChallan No : DN-25-00318\nSO no : RO-25-26-00310\nPrepared By : Arun.R\nChecked By : VISHNU\nDelivered By : VISHNU\n",
+    "tables": [
+      [
+        {
+          "SLN": "1",
+          "Group/Item": "MAJOR-HS M",
+          "HSN Code": "62052000",
+          "MRP": "685.00",
+          "Rate": "440.00",
+          "Qty": "2",
+          "UOM": "Nos",
+          "Value": "880.00"
+        },
+        {
+          "SLN": "2",
+          "Group/Item": "MAJOR-HS L",
+          "HSN Code": "62052000",
+          "MRP": "685.00",
+          "Rate": "440.00",
+          "Qty": "2",
+          "UOM": "Nos",
+          "Value": "880.00"
+        },
+        {
+          "SLN": "3",
+          "Group/Item": "MAJOR-HS XL",
+          "HSN Code": "62052000",
+          "MRP": "685.00",
+          "Rate": "440.00",
+          "Qty": "2",
+          "UOM": "Nos",
+          "Value": "880.00"
+        },
+        {
+          "SLN": "4",
+          "Group/Item": "MAJOR-HS XXL",
+          "HSN Code": "62052000",
+          "MRP": "685.00",
+          "Rate": "440.00",
+          "Qty": "3",
+          "UOM": "Nos",
+          "Value": "1,320.00"
+        },
+        {
+          "SLN": "5",
+          "Group/Item": "MAJOR-FS M",
+          "HSN Code": "62052000",
+          "MRP": "685.00",
+          "Rate": "440.00",
+          "Qty": "5",
+          "UOM": "Nos",
+          "Value": "2,200.00"
+        },
+        {
+          "SLN": "6",
+          "Group/Item": "MAJOR-FS L",
+          "HSN Code": "62052000",
+          "MRP": "685.00",
+          "Rate": "440.00",
+          "Qty": "5",
+          "UOM": "Nos",
+          "Value": "2,200.00"
+        },
+        {
+          "SLN": "7",
+          "Group/Item": "MAJOR-FS XL",
+          "HSN Code": "62052000",
+          "MRP": "685.00",
+          "Rate": "440.00",
+          "Qty": "3",
+          "UOM": "Nos",
+          "Value": "1,320.00"
+        },
+        {
+          "SLN": "8",
+          "Group/Item": "MAJOR-FS XXL",
+          "HSN Code": "62052000",
+          "MRP": "685.00",
+          "Rate": "440.00",
+          "Qty": "3",
+          "UOM": "Nos",
+          "Value": "1,320.00"
+        }
+      ],
+      [
+        {
+          "HSN/SAC": "62052000",
+          "Taxable Amount": "10,560.00",
+          "CGST": "(2.5%) 264.00",
+          "SGST": "(2.5%) 264.00"
+        }
+      ]
+    ]
+  }
+}
