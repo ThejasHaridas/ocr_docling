@@ -23,19 +23,34 @@ class Party(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     gstin: Optional[str] = None
+    pan: Optional[str] = None
+    dl_no: Optional[str] = None
+    fssai: Optional[str] = None
 
 
 class LineItem(BaseModel):
-    """A single row from the invoice's line-item table."""
+    """A single row from the invoice's line-item table.
+
+    Superset of columns seen across templates (general trade + pharma). Fields
+    that don't apply to a given invoice stay ``None``.
+    """
 
     sln: Optional[str] = None
     group_item: Optional[str] = None
     description: Optional[str] = None
     hsn_code: Optional[str] = None
+    mfr: Optional[str] = None
+    pack: Optional[str] = None
+    batch: Optional[str] = None
+    expiry: Optional[str] = None
     mrp: Optional[float] = None
     rate: Optional[float] = None
     qty: Optional[float] = None
+    free_qty: Optional[float] = None
     uom: Optional[str] = None
+    discount_pct: Optional[float] = None
+    gst_pct: Optional[float] = None
+    gst_amount: Optional[float] = None
     value: Optional[float] = None
 
 
@@ -55,11 +70,16 @@ class TaxLine(BaseModel):
 class Totals(BaseModel):
     """Invoice-level totals."""
 
+    total_items: Optional[float] = None
     total_qty: Optional[float] = None
     taxable_amount: Optional[float] = None
+    discount: Optional[float] = None
     sgst: Optional[float] = None
     cgst: Optional[float] = None
     igst: Optional[float] = None
+    cess: Optional[float] = None
+    tax_amount: Optional[float] = None
+    round_off: Optional[float] = None
     grand_total: Optional[float] = None
 
 

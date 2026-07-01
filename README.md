@@ -39,11 +39,24 @@ Environment variables:
 
 | Variable | Purpose |
 |----------|---------|
+| `BILL_EXTRACTOR_BACKEND` | `auto` (default: Docling, falling back to text if models are blocked), `docling` (force Docling), or `text` (pypdfium2 text extraction — no models, digital PDFs only) |
 | `BILL_EXTRACTOR_OCR` | OCR engine: `auto` (default), `rapidocr`, `easyocr`, `tesseract`, `tesseract_cli` |
 | `BILL_EXTRACTOR_ARTIFACTS` | Path to a local Docling model cache (offline use) |
 
 If models can't be fetched, the CLI exits with a clear, actionable message
 instead of a stack trace.
+
+### Offline text backend (digital PDFs)
+
+For **digital / text-based PDFs** (not scans), you can skip Docling's models
+entirely and extract with the built-in pypdfium2 text backend — fully offline:
+
+```bash
+BILL_EXTRACTOR_BACKEND=text python -m bill_extractor invoice.pdf
+```
+
+In `auto` mode this also kicks in automatically as a fallback when Docling's
+models can't be downloaded. For scanned images you still need Docling (OCR).
 
 ## CLI usage
 
@@ -98,10 +111,48 @@ Every field is optional and degrades to `null` when OCR can't recover it, so the
 extractor never fails on an imperfect scan. When a field looks wrong, the
 `raw.markdown` / `raw.tables` payload lets you recover or re-map it.
 
-See [`examples/sample_output.json`](examples/sample_output.json) for a full
-example for `examples/sample_invoice.jpg`. (That file is produced by
+## Supported templates & examples
+
+The rule-based layer is designed to generalise across invoice layouts. The
+`examples/` folder ships several real templates and their extracted JSON:
+
+| Input | Type | Output |
+|-------|------|--------|
+| `sample_invoice.jpg` | Raajaram & Co (general trade, image) | `sample_output.json` |
+| `chempharma_invoice.pdf` | Chem Pharma (pharma distributor, digital PDF) | `chempharma_invoice.json` |
+| `fatima_invoice.pdf` | Fatima Drug Lines (pharma distributor, digital PDF) | `fatima_invoice.json` |
+| `unicorn_invoice.pdf` | Unicorn Enterprises (pharma distributor, digital PDF) | `unicorn_invoice.json` |
+
+Regenerate them with:
+
+```bash
+# image template (uses the reconstructed Docling output helper, see below)
+python examples/generate_sample_output.py
+# digital PDFs via the offline text backend
+BILL_EXTRACTOR_BACKEND=text python -m bill_extractor examples/chempharma_invoice.pdf -o examples/chempharma_invoice.json
+```
+
+Across these templates the extractor reliably pulls seller identity (name /
+GSTIN / PAN), invoice number & date, line items (incl. pharma fields: MFR, HSN,
+batch, expiry, MRP, qty, rate, GST% & amount), the GST tax summary, totals
+(taxable, discount, round-off, grand total) and the amount in words.
+
+### Known limitations
+
+- **Line items need a clean row structure.** Docling's table recognition (or a
+  one-line-per-item layout like the Chem Pharma / Fatima PDFs) yields full line
+  items. On layouts where the raw text stream interleaves columns across lines
+  (e.g. the Unicorn PDF via the *text* backend), per-row items can't be
+  reconstructed — running through **Docling** (with model access) recovers them
+  via layout analysis. Header fields, tax and totals are still extracted.
+- **Party-block attribution is best-effort.** Which block is buyer vs. consignee
+  is inferred heuristically (and by excluding the seller's GSTIN); on dense
+  multi-block layouts this can be approximate. The raw Docling/text output is
+  retained under `raw` so anything mis-attributed can be recovered.
+
+`sample_output.json` is produced by
 [`examples/generate_sample_output.py`](examples/generate_sample_output.py),
 which runs the real parser over a faithful reconstruction of Docling's output,
-so the repo ships a representative example even where the model hosts are
-blocked. With Hugging Face reachable, `python -m bill_extractor
-examples/sample_invoice.jpg` yields the same structure directly.)
+so the repo ships a representative image-template example even where the model
+hosts are blocked. With Hugging Face reachable, `python -m bill_extractor
+examples/sample_invoice.jpg` yields the same structure directly.

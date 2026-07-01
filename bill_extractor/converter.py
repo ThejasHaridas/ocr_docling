@@ -10,6 +10,11 @@ Configuration via environment variables (all optional):
                                    ``easyocr``, ``tesseract`` or ``tesseract_cli``.
   * ``BILL_EXTRACTOR_ARTIFACTS`` — path to a local Docling model cache, for
                                    offline / air-gapped use (see README).
+  * ``BILL_EXTRACTOR_BACKEND``   — ``auto`` (default: Docling, falling back to
+                                   the text backend if models are unreachable),
+                                   ``docling`` (force Docling), or ``text``
+                                   (pypdfium2 text extraction, no models — good
+                                   for digital/text PDFs and fully offline).
 """
 
 from __future__ import annotations
@@ -19,29 +24,32 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import (
-    EasyOcrOptions,
-    PdfPipelineOptions,
-    RapidOcrOptions,
-    TesseractCliOcrOptions,
-    TesseractOcrOptions,
-)
-from docling.document_converter import DocumentConverter, PdfFormatOption
+# Docling (and its heavy torch stack) is imported lazily inside the functions
+# that need it, so the offline text backend stays fast and dependency-light.
 
-_OCR_OPTIONS = {
-    "rapidocr": RapidOcrOptions,
-    "easyocr": EasyOcrOptions,
-    "tesseract": TesseractOcrOptions,
-    "tesseract_cli": TesseractCliOcrOptions,
-}
+_OCR_ENGINE_NAMES = {"rapidocr", "easyocr", "tesseract", "tesseract_cli"}
 
 
 class ModelDownloadError(RuntimeError):
     """Raised when Docling cannot fetch its models (e.g. network policy)."""
 
 
-def _pipeline_options() -> PdfPipelineOptions:
+def _pipeline_options():
+    from docling.datamodel.pipeline_options import (
+        EasyOcrOptions,
+        PdfPipelineOptions,
+        RapidOcrOptions,
+        TesseractCliOcrOptions,
+        TesseractOcrOptions,
+    )
+
+    ocr_options = {
+        "rapidocr": RapidOcrOptions,
+        "easyocr": EasyOcrOptions,
+        "tesseract": TesseractOcrOptions,
+        "tesseract_cli": TesseractCliOcrOptions,
+    }
+
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_ocr = True
     pipeline_options.do_table_structure = True
@@ -52,19 +60,22 @@ def _pipeline_options() -> PdfPipelineOptions:
         pipeline_options.artifacts_path = artifacts
 
     engine = os.getenv("BILL_EXTRACTOR_OCR", "auto").lower()
-    ocr_cls = _OCR_OPTIONS.get(engine)
+    ocr_cls = ocr_options.get(engine)
     if ocr_cls is not None:
         pipeline_options.ocr_options = ocr_cls(force_full_page_ocr=True)
     return pipeline_options
 
 
 @lru_cache(maxsize=1)
-def _build_converter() -> DocumentConverter:
+def _build_converter():
     """Build (and cache) a DocumentConverter with OCR + table structure on.
 
     The converter and its underlying models are expensive to load, so we cache
     a single instance for the life of the process.
     """
+    from docling.datamodel.base_models import InputFormat
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+
     fmt = PdfFormatOption(pipeline_options=_pipeline_options())
     return DocumentConverter(
         format_options={
@@ -87,23 +98,37 @@ def _table_to_rows(table: Any) -> List[Dict[str, Any]]:
 
 
 def to_docling_document(source: str | Path) -> Tuple[Any, str, List[List[Dict[str, Any]]]]:
-    """Run Docling on ``source`` and return ``(document, markdown, tables)``.
+    """Extract ``(document, markdown, tables)`` from ``source``.
 
-    ``tables`` is a list of tables, each a list of row dicts.
+    Uses Docling by default (best quality: OCR + table structure). When
+    ``BILL_EXTRACTOR_BACKEND=text`` — or when Docling's models can't be fetched
+    in ``auto`` mode — falls back to plain pypdfium2 text extraction, which needs
+    no models and works offline on digital/text PDFs (``tables`` is then empty
+    and line items are parsed from the text).
     """
     source = str(source)
+    backend = os.getenv("BILL_EXTRACTOR_BACKEND", "auto").lower()
+
+    if backend == "text":
+        return _text_backend(source)
+
     converter = _build_converter()
     try:
         result = converter.convert(source)
-    except Exception as exc:  # surface model-download failures clearly
-        if _looks_like_download_failure(exc):
+    except Exception as exc:  # surface / recover from model-download failures
+        download_failure = _looks_like_download_failure(exc)
+        if backend == "auto" and download_failure and _is_pdf(source):
+            return _text_backend(source)
+        if download_failure:
             raise ModelDownloadError(
                 "Docling could not download its models. The layout/table models "
                 "are hosted on Hugging Face and OCR models on Hugging Face / "
                 "ModelScope; this environment may block those hosts.\n"
-                "Fix: run this where huggingface.co is reachable, or pre-download "
+                "Fix: run this where huggingface.co is reachable, pre-download "
                 "models with `docling-tools models download -o ./docling-models` "
-                "and set BILL_EXTRACTOR_ARTIFACTS=./docling-models.\n"
+                "and set BILL_EXTRACTOR_ARTIFACTS=./docling-models, or force the "
+                "offline text backend with BILL_EXTRACTOR_BACKEND=text (digital "
+                "PDFs only).\n"
                 f"Original error: {exc}"
             ) from exc
         raise
@@ -116,6 +141,28 @@ def to_docling_document(source: str | Path) -> Tuple[Any, str, List[List[Dict[st
 
     tables = [_table_to_rows(t) for t in getattr(document, "tables", [])]
     return document, markdown, tables
+
+
+def _is_pdf(source: str) -> bool:
+    return source.lower().endswith(".pdf")
+
+
+def _text_backend(source: str) -> Tuple[Any, str, List[List[Dict[str, Any]]]]:
+    """Model-free text extraction for digital PDFs via pypdfium2."""
+    if not _is_pdf(source):
+        raise ModelDownloadError(
+            "The offline text backend only supports digital PDFs; "
+            f"'{source}' needs Docling OCR (which requires model downloads)."
+        )
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(source)
+    pages = []
+    for page in pdf:
+        textpage = page.get_textpage()
+        pages.append(textpage.get_text_range())
+    markdown = "\n".join(pages)
+    return None, markdown, []
 
 
 def _looks_like_download_failure(exc: Exception) -> bool:

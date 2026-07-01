@@ -14,13 +14,34 @@ from .schema import Invoice, LineItem, Party, RawOutput, TaxLine, Totals
 
 # --- regexes ---------------------------------------------------------------
 
-GSTIN_RE = re.compile(r"\b\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]{3}\b")
+_GSTIN_CORE = r"\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]{3}"
+GSTIN_RE = re.compile(rf"\b{_GSTIN_CORE}\b")
+GST_NO_RE = re.compile(rf"gst\s*no\.?\s*[:#]?\s*({_GSTIN_CORE})", re.IGNORECASE)
+PAN_RE = re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b")
 DATE_RE = re.compile(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b")
 PHONE_RE = re.compile(r"\b[6-9]\d{9}\b")
 PIN_RE = re.compile(r"\b\d{6}\b")
-EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+EMAIL_RE = re.compile(r"[\w.+-]+@\s?[\w-]+\.[\w.-]+")
+# Invoice-code shapes seen across templates: RR-25-26-00306 (hyphenated) and
+# UE2526-13635 / C25-31706 (letters+digits then a run).
 DOC_CODE_RE = re.compile(r"\b[A-Z]{1,4}-\d{2}(?:-\d{2})?-\d{3,6}\b")
-STATE_CODE_RE = re.compile(r"State Code[:\s]*([0-9]{1,2})", re.IGNORECASE)
+INV_CODE_RE = re.compile(r"\b[A-Z]{1,4}\d{2,4}-\d{3,6}\b")
+STATE_CODE_RE = re.compile(r"State\s*(?:Code)?[:\s]*([0-9]{1,2})\b", re.IGNORECASE)
+# One pharma line-item row, anchored on the 8-digit HSN and the MM-YY expiry:
+#   MFR  HSN  DESCRIPTION...  BATCH  EXP  MRP  QTY  RATE  AMOUNT  GST%  GSTAMT  TOTAL
+PHARMA_ROW_RE = re.compile(
+    r"^(?P<mfr>[A-Za-z][\w.&/-]*)\s+(?P<hsn>\d{8})\s+(?P<desc>.+?)\s+"
+    r"(?P<batch>[A-Za-z0-9][\w./-]*)\s+(?P<exp>\d{2}[-/]\d{2,4})\s+"
+    r"(?P<mrp>[\d,]+\.?\d*)\s+(?P<qty>\d+)\s+(?P<rate>[\d,]+\.?\d*)\s+"
+    r"(?P<amount>[\d,]+\.?\d*)\s+(?P<gst>\d+(?:\.\d+)?)\s+"
+    r"(?P<gstamt>[\d,]+\.?\d*)\s+(?P<total>[\d,]+\.?\d*)\s*$"
+)
+# A GST-slab summary row on a single line: "12% 1260.22 75.62 75.62 151.24"
+# (blanks restricted to spaces/tabs so it can't span lines onto a totals row).
+GST_SLAB_RE = re.compile(
+    r"(?<!\d)(?P<pct>\d{1,2})%[ \t]+(?P<taxable>[\d,]+\.\d{2})[ \t]+(?P<sgst>[\d,]+\.\d{2})"
+    r"[ \t]+(?P<cgst>[\d,]+\.\d{2})[ \t]+(?P<totgst>[\d,]+\.\d{2})"
+)
 
 
 # --- value helpers ---------------------------------------------------------
@@ -64,12 +85,16 @@ def _value_after_label(lines: List[str], labels: List[str]) -> Optional[str]:
     inline form requires a ``:``/``#`` separator — this avoids loose labels like
     ``lr`` swallowing ``LR No`` and prevents grabbing an adjacent labelled field.
     """
-    label_res = [re.compile(rf"^\s*{lbl}\b\s*[:#]\s*(.+)$", re.IGNORECASE) for lbl in labels]
-    bare_res = [re.compile(rf"^\s*{lbl}\b\s*[:#]?\s*$", re.IGNORECASE) for lbl in labels]
+    # Allow trailing punctuation in the label ("No." / "Dt.") before the separator.
+    label_res = [re.compile(rf"^\s*{lbl}\b[.\s]*[:#]\s*(.+)$", re.IGNORECASE) for lbl in labels]
+    bare_res = [re.compile(rf"^\s*{lbl}\b[.\s]*[:#]?\s*$", re.IGNORECASE) for lbl in labels]
     for i, line in enumerate(lines):
         for rx in label_res:
             m = rx.search(line)
             if m:
+                # Reject an adjacent labelled field ("Invoice No. : Date :").
+                if _looks_like_label(m.group(1).strip()):
+                    continue
                 value = _clean_value(m.group(1))
                 if value:
                     return value
@@ -112,16 +137,30 @@ def _find_doc_code(text: str, exclude: set[str]) -> Optional[str]:
 # --- section parsers -------------------------------------------------------
 
 
+_SELLER_NAME_STOPWORDS = (
+    "invoice", "tax invoice", "copy", "mailed copy", "original", "duplicate",
+    "description", "bank", "details", "distributors", "declaration", "gstin",
+    "state", "jurisdiction", "authorised signatory", "for ", "e & o",
+)
+
+
 def parse_seller(markdown: str, gstins: List[str]) -> Party:
-    lines = _lines(markdown)
     party = Party()
-    if lines:
-        party.name = lines[0]
-    if gstins:
+    party.name = _seller_name(markdown)
+
+    # The seller's own GSTIN is often labelled "GST No" (customer's is "GSTIN").
+    gst_no = GST_NO_RE.search(markdown)
+    if gst_no:
+        party.gstin = gst_no.group(1).upper()
+    elif gstins:
         party.gstin = gstins[0]
+
+    # PAN sits inside the GSTIN (chars 3-12); prefer that over a stray PAN token.
+    if party.gstin:
+        party.pan = party.gstin[2:12]
     email = EMAIL_RE.search(markdown)
     if email:
-        party.email = email.group(0)
+        party.email = email.group(0).replace(" ", "")
     phone = PHONE_RE.search(markdown)
     if phone:
         party.phone = phone.group(0)
@@ -129,6 +168,31 @@ def parse_seller(markdown: str, gstins: List[str]) -> Party:
     if sc:
         party.state_code = sc.group(1)
     return party
+
+
+def _seller_name(markdown: str) -> Optional[str]:
+    """Best-effort seller name.
+
+    On many templates the biller's name is the most-repeated company-style line
+    (header + footer + bank block); fall back to the first non-label line.
+    """
+    counts: Dict[str, int] = {}
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if not re.fullmatch(r"[A-Z][A-Z .&'-]{3,40}", line):
+            continue
+        low = line.lower()
+        if any(sw in low for sw in _SELLER_NAME_STOPWORDS):
+            continue
+        counts[line] = counts.get(line, 0) + 1
+    repeated = [(n, c) for n, c in counts.items() if c >= 2]
+    if repeated:
+        repeated.sort(key=lambda x: (-x[1], -len(x[0])))
+        return repeated[0][0]
+    for raw in _lines(markdown):
+        if not _looks_like_label(raw) and re.search(r"[A-Za-z]", raw):
+            return raw
+    return None
 
 
 def _party_from_block(block: str, gstin: Optional[str]) -> Party:
@@ -156,14 +220,16 @@ def _party_from_block(block: str, gstin: Optional[str]) -> Party:
     return party
 
 
-def parse_parties(markdown: str, gstins: List[str]) -> tuple[Party, Party]:
+def parse_parties(markdown: str, gstins: List[str],
+                  seller_gstin: Optional[str] = None) -> tuple[Party, Party]:
     """Best-effort split of Bill To / Ship To blocks.
 
-    Falls back to GSTIN ordering (seller, bill_to, ship_to) when label-based
-    block detection is unreliable.
+    Falls back to GSTIN ordering when label-based block detection is
+    unreliable, using the GSTIN(s) that aren't the seller's for the customer.
     """
-    bill_gstin = gstins[1] if len(gstins) > 1 else None
-    ship_gstin = gstins[2] if len(gstins) > 2 else (gstins[1] if len(gstins) > 1 else None)
+    customer = [g for g in gstins if g != seller_gstin]
+    bill_gstin = customer[0] if customer else None
+    ship_gstin = customer[1] if len(customer) > 1 else bill_gstin
 
     bill_block = _grab_block(markdown, r"bill\s*to")
     ship_block = _grab_block(markdown, r"ship\s*to")
@@ -199,11 +265,16 @@ def parse_meta(markdown: str, invoice: Invoice) -> None:
     lines = _lines(markdown)
     full = markdown
 
-    invoice.invoice_no = _value_after_label(lines, ["invoice no", "invoice"]) or _find_doc_code(full, set())
-    if invoice.invoice_no:
-        invoice.invoice_no = invoice.invoice_no.split()[0] if invoice.invoice_no else None
+    inv_no = _value_after_label(lines, ["invoice no", "inv no", "bill no", "invoice"])
+    if inv_no:
+        m = DOC_CODE_RE.search(inv_no) or INV_CODE_RE.search(inv_no)
+        inv_no = m.group(0) if m else inv_no.split()[0]
+    if not inv_no:  # order-independent fallback: first invoice-shaped code
+        m = DOC_CODE_RE.search(full) or INV_CODE_RE.search(full)
+        inv_no = m.group(0) if m else None
+    invoice.invoice_no = inv_no
 
-    date = _value_after_label(lines, ["date"])
+    date = _value_after_label(lines, ["invoice date", "inv date", "inv dt", "date", "dt"])
     dm = DATE_RE.search(date) if date else None
     if not dm:
         dm = DATE_RE.search(full)
@@ -226,13 +297,25 @@ def parse_meta(markdown: str, invoice: Invoice) -> None:
         som = DOC_CODE_RE.search(so)
         invoice.so_no = som.group(0) if som else so.split()[0]
 
-    words = re.search(r"amount\s*in\s*words\s*[:|]?\s*(.+)", full, re.IGNORECASE)
-    if words:
-        invoice.amount_in_words = words.group(1).strip().strip("|").strip()
+    invoice.amount_in_words = _parse_amount_in_words(full)
 
-    invoice.prepared_by = _value_after_label(lines, ["prepared by"])
-    invoice.checked_by = _value_after_label(lines, ["checked by"])
-    invoice.delivered_by = _value_after_label(lines, ["delivered by"])
+    invoice.prepared_by = _value_after_label(lines, ["prepared by", "prep by"])
+    invoice.checked_by = _value_after_label(lines, ["checked by", "chkd", "ckd"])
+    invoice.delivered_by = _value_after_label(lines, ["delivered by", "despatch"])
+
+
+def _parse_amount_in_words(full: str) -> Optional[str]:
+    """Extract the amount-in-words phrase across label variants / free text."""
+    label = re.search(r"am(?:oun)?t\.?\s*in\s*words\s*[:|]?\s*(.+)", full, re.IGNORECASE)
+    if label:
+        value = label.group(1).splitlines()[0].strip(" |:")
+        if value:
+            return value
+    # Free-standing phrase like "RUPEES ... ONLY" / "... Rupees Only".
+    phrase = re.search(r"\b(rupees\b[\w ,.\-]*?\bonly)\b", full, re.IGNORECASE)
+    if not phrase:
+        phrase = re.search(r"\b([A-Z][\w ,.\-]*?\brupees?\s+only)\b", full, re.IGNORECASE)
+    return phrase.group(1).strip() if phrase else None
 
 
 # --- table parsers ---------------------------------------------------------
@@ -306,6 +389,38 @@ def parse_line_items(tables: List[List[Dict[str, Any]]]) -> List[LineItem]:
     return items
 
 
+def parse_line_items_text(markdown: str) -> List[LineItem]:
+    """Parse pharma-style line items directly from text (no table available).
+
+    Each row is a single line anchored on an 8-digit HSN and an MM-YY expiry,
+    e.g. ``SUN 30049099 VORTIDIF 10 TAB 10's GTG0976A 02-27 190.00 5 135.71
+    644.62 12 77.36 721.98``. ``value`` holds the taxable line amount; GST is
+    kept separately in ``gst_pct`` / ``gst_amount``.
+    """
+    items: List[LineItem] = []
+    for line in markdown.splitlines():
+        m = PHARMA_ROW_RE.match(line.strip())
+        if not m:
+            continue
+        items.append(
+            LineItem(
+                sln=str(len(items) + 1),
+                mfr=m.group("mfr"),
+                description=m.group("desc").strip(),
+                hsn_code=m.group("hsn"),
+                batch=m.group("batch"),
+                expiry=m.group("exp"),
+                mrp=to_float(m.group("mrp")),
+                qty=to_float(m.group("qty")),
+                rate=to_float(m.group("rate")),
+                value=to_float(m.group("amount")),
+                gst_pct=to_float(m.group("gst")),
+                gst_amount=to_float(m.group("gstamt")),
+            )
+        )
+    return items
+
+
 def parse_tax_summary(tables: List[List[Dict[str, Any]]]) -> List[TaxLine]:
     out: List[TaxLine] = []
     for rows in tables:
@@ -340,6 +455,25 @@ def parse_tax_summary(tables: List[List[Dict[str, Any]]]) -> List[TaxLine]:
     return out
 
 
+def parse_tax_summary_text(markdown: str) -> List[TaxLine]:
+    """Parse GST-slab tax rows from text, e.g. ``12% 1260.22 75.62 75.62 151.24``."""
+    out: List[TaxLine] = []
+    for m in GST_SLAB_RE.finditer(markdown):
+        pct = to_float(m.group("pct"))
+        half = round(pct / 2, 2) if pct is not None else None
+        out.append(
+            TaxLine(
+                hsn_sac=f"{m.group('pct')}%",
+                taxable_amount=to_float(m.group("taxable")),
+                sgst_rate=half,
+                sgst_amount=to_float(m.group("sgst")),
+                cgst_rate=half,
+                cgst_amount=to_float(m.group("cgst")),
+            )
+        )
+    return out
+
+
 def _split_rate_amount(cell: Optional[str]) -> tuple[Optional[float], Optional[float]]:
     """From a cell like ``(2.5%) ₹ 264.00`` return ``(rate, amount)``."""
     if cell is None:
@@ -360,36 +494,46 @@ def parse_totals(markdown: str, tables: List[List[Dict[str, Any]]]) -> Totals:
             chunks.append(" ".join(str(v) for v in row.values() if v is not None))
     text = "\n".join(chunks)
 
-    totals.grand_total = _amount_for(text, r"grand\s*total")
-    totals.taxable_amount = _amount_for(text, r"taxable\s*amount")
+    totals.grand_total = _amount_for(text, r"(?:grand\s*total|net\s*amount|net\s*payable)")
+    totals.taxable_amount = _amount_for(text, r"(?:taxable\s*amount|sales\s*value|taxable\s*amt)")
+    totals.discount = _amount_for(text, r"^\s*(?:discount|bill\s*disc)")
+    totals.round_off = _amount_for(text, r"(?:round\s*off|r/?\.?\s*of)")
+    totals.cess = _amount_for(text, r"cess")
     totals.sgst = _amount_for(text, r"(?:state\s*gst|sgst)")
     totals.cgst = _amount_for(text, r"(?:central\s*gst|cgst)")
     totals.igst = _amount_for(text, r"(?:integrated\s*gst|igst)")
+    totals.tax_amount = _amount_for(text, r"tax\s*amount")
 
-    # Total qty: a "Total" line that is not the grand total.
-    for line in text.splitlines():
-        if re.search(r"\btotal\b", line, re.IGNORECASE) and not re.search(
-            r"grand|taxable|gst", line, re.IGNORECASE
-        ):
-            nums = [to_float(n) for n in re.findall(r"\d[\d,]*\.?\d*", line)]
-            nums = [n for n in nums if n is not None]
-            if nums:
-                totals.total_qty = nums[0]
-            break
+    # "TOTAL ITEM. 15 for 3" -> total_qty 15, total_items 3.
+    m = re.search(r"total\s*items?\.?\s*(\d+)\s*for\s*(\d+)", text, re.IGNORECASE)
+    if m:
+        totals.total_qty = to_float(m.group(1))
+        totals.total_items = to_float(m.group(2))
+    else:
+        # A plain "Total <qty> <amount>" row (first template).
+        for line in text.splitlines():
+            if re.search(r"\btotal\b", line, re.IGNORECASE) and not re.search(
+                r"grand|taxable|gst|net|item", line, re.IGNORECASE
+            ):
+                nums = [to_float(n) for n in re.findall(r"\d[\d,]*\.?\d*", line)]
+                nums = [n for n in nums if n is not None]
+                if nums:
+                    totals.total_qty = nums[0]
+                break
     return totals
 
 
 def _amount_for(text: str, label_pattern: str) -> Optional[float]:
-    """Find the last money-looking number on the line containing ``label``."""
+    """Find the last money amount (with 2 decimals) on the line with ``label``.
+
+    Requiring the ``.dd`` decimals avoids grabbing phone numbers, PINs or codes
+    that share the line with a label in positionally-jumbled OCR text.
+    """
     for line in text.splitlines():
         if re.search(label_pattern, line, re.IGNORECASE):
-            money = re.findall(r"[₹Rs.]*\s*[\d,]+\.\d{2}", line)
+            money = re.findall(r"-?\s*[\d,]+\.\d{2}\b", line)
             if money:
                 return to_float(money[-1])
-            nums = re.findall(r"[\d,]+\.?\d*", line)
-            vals = [to_float(n) for n in nums if to_float(n) is not None]
-            if vals:
-                return vals[-1]
     return None
 
 
@@ -415,10 +559,12 @@ def parse(markdown: str, tables: List[List[Dict[str, Any]]]) -> Invoice:
 
     invoice = Invoice()
     invoice.seller = parse_seller(markdown, gstins)
-    invoice.bill_to, invoice.ship_to = parse_parties(markdown, gstins)
+    invoice.bill_to, invoice.ship_to = parse_parties(markdown, gstins, invoice.seller.gstin)
     parse_meta(markdown, invoice)
-    invoice.line_items = parse_line_items(tables)
-    invoice.tax_summary = parse_tax_summary(tables)
+    # Prefer Docling's recognised tables; fall back to text-based parsing
+    # (e.g. the offline text backend, or templates without a clean table).
+    invoice.line_items = parse_line_items(tables) or parse_line_items_text(markdown)
+    invoice.tax_summary = parse_tax_summary(tables) or parse_tax_summary_text(markdown)
     invoice.totals = parse_totals(markdown, tables)
     _reconcile_totals(invoice)
     invoice.raw = RawOutput(markdown=markdown, tables=tables)
