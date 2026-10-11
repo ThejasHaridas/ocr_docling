@@ -20,8 +20,9 @@ from typing import List, Optional
 
 from .schema import LineItem, PurchaseLine
 
+
 def round2(value: float, places: int = 2) -> float:
-    return round(value + 0.0, places)
+    return round(value, places) + 0.0  # "+ 0.0" turns -0.0 into 0.0
 
 
 # Drug form inferred from tokens in the product name (first match wins).

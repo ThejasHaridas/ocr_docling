@@ -56,6 +56,9 @@ def to_float(value: Any) -> Optional[float]:
     cleaned = re.sub(r"[^0-9.\-]", "", text)
     if cleaned in ("", "-", ".", "-."):
         return None
+    if cleaned.count(".") > 1:  # two numbers in one cell, e.g. "5.00(2.50)"
+        first = re.search(r"-?\d+(?:\.\d+)?", text)
+        cleaned = first.group(0) if first else cleaned
     try:
         return float(cleaned)
     except ValueError:
@@ -350,24 +353,30 @@ def _is_line_item_table(headers: List[str]) -> bool:
 
 # Header synonyms (after ``_norm``) per logical column, seen across the supplier
 # templates (Chem Pharma, Fatima group, Kurikkal, Bluefox, Alankar, KIMS...).
-# ``exact`` names win over ``contains`` fragments, so "Qty" beats "Sch Qty".
+# Synonyms are tried in priority order, ``exact`` before ``contains``; a header
+# containing an ``exclude`` fragment never matches by ``contains``. Multi-row
+# headers flatten to e.g. "Quantity.Billed", hence the ``contains`` fallbacks.
 _COLUMN_SYNONYMS: Dict[str, Dict[str, tuple]] = {
     "sln": {"exact": ("sln", "slno", "sno", "si", "sl")},
     "group": {"exact": ("groupitem", "item")},
     "desc": {"exact": ("description", "particulars", "product", "productname", "products",
                        "itemdescription", "descriptionofgoods", "itemname"),
-             "contains": ("descr", "particular")},
+             "contains": ("descr", "particular", "productname")},
     "hsn": {"exact": ("hsn", "hsncode", "hsnsac"), "contains": ("hsn",)},
     "mfr": {"exact": ("mfr", "mfac", "manf", "manuf", "mfg", "manufacturer", "mkt")},
     "pack": {"exact": ("pkg", "pack", "packing", "packsize")},
     "batch": {"exact": ("batch", "batchno", "batchcode"), "contains": ("batch",)},
     "expiry": {"exact": ("exdt", "expd", "exp", "expiry", "expdate", "expirydate"),
                "contains": ("expiry", "exdt")},
-    "mrp": {"exact": ("mrp",), "contains": ("mrp",)},
-    "qty": {"exact": ("qty", "quantity", "billed", "eaqty"), "contains": ()},
-    "free": {"exact": ("free", "fr", "freeqty", "freerepl")},
+    # Revised-price invoices print "Old MRP" and "New MRP": the new one applies.
+    "mrp": {"exact": ("mrp", "newmrp"), "contains": ("mrp",), "exclude": ("old",)},
+    "qty": {"exact": ("qty", "quantity", "billed", "eaqty", "pcs"),
+            "contains": ("billed", "qty", "quantity"), "exclude": ("free", "sch", "tot", "repl")},
+    # "Sch Qty" / "Sch" columns carry scheme (free) stock.
+    "free": {"exact": ("free", "fr", "freeqty", "freerepl", "schqty", "sch"),
+             "contains": ("free",)},
     "replace": {"exact": ("replace", "repl", "replacement", "replqty")},
-    "rate": {"exact": ("rate", "srate", "tradeprice", "ptr")},
+    "rate": {"exact": ("rate", "srate", "sellrate", "tradeprice", "ptr")},
     "disc_pct": {"exact": ("dis", "disc", "discpct", "discount", "dispct")},
     "disc_amt": {"exact": ("discamt", "disamt", "discamount")},
     "sch_disc": {"exact": ("schdisc", "schdis", "scheme")},
@@ -376,26 +385,29 @@ _COLUMN_SYNONYMS: Dict[str, Dict[str, tuple]] = {
     "cgst_amt": {"exact": ("cgstamt", "cgst")},
     "sgst_amt": {"exact": ("sgstamt", "sgst")},
     "cess_amt": {"exact": ("cessamt", "cess")},
-    "amount": {"exact": ("amount", "amt", "grossamt", "grossamount", "gross", "taxablevalue",
-                         "taxable", "taxableamt", "value", "netvalue")},
-    "net": {"exact": ("netamt", "netamount", "total", "totalamt", "lineamount")},
+    "net": {"exact": ("netamt", "netamount", "netvalue", "total", "totalamt", "lineamount")},
+    # Taxable value (after discount) is preferred over gross when both exist.
+    "amount": {"exact": ("taxablevalue", "taxableamt", "taxable", "amount", "amt", "value",
+                         "grossamt", "grossamount", "gross")},
 }
 
 
 def _resolve_columns(headers: List[str]) -> Dict[str, Optional[str]]:
-    """Map each logical column to the (first) matching header, or ``None``."""
+    """Map each logical column to its best-matching header, or ``None``.
+
+    Keys resolve in dict order and claim their header, so "net" ("Net Value")
+    is taken before "amount" can fall back to it.
+    """
     normed = [(h, _norm(h)) for h in headers]
     used: set[str] = set()
     cols: Dict[str, Optional[str]] = {}
-    # "net" is resolved before "amount" so a lone "Total"/"Net Amt." column is
-    # not swallowed as the taxable amount.
-    order = [k for k in _COLUMN_SYNONYMS if k not in ("amount",)] + ["amount"]
-    for key in order:
-        spec = _COLUMN_SYNONYMS[key]
-        found = next((h for h, n in normed if h not in used and n in spec["exact"]), None)
+    for key, spec in _COLUMN_SYNONYMS.items():
+        free = [(h, n) for h, n in normed if h not in used]
+        found = next((h for syn in spec["exact"] for h, n in free if n == syn), None)
         if found is None:
-            found = next((h for h, n in normed
-                          if h not in used and any(f in n for f in spec.get("contains", ()))), None)
+            exclude = spec.get("exclude", ())
+            found = next((h for frag in spec.get("contains", ()) for h, n in free
+                          if frag in n and not any(x in n for x in exclude)), None)
         if found is not None:
             used.add(found)
         cols[key] = found

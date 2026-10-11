@@ -16,7 +16,7 @@ extractor fills for the column (``None`` for ``master``/``setup`` columns).
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, NamedTuple, Optional
+from typing import Iterable, List, NamedTuple, Optional
 
 from .schema import PurchaseLine
 
@@ -34,7 +34,7 @@ class Column(NamedTuple):
 
 _I, _D, _M, _S = "invoice", "derived", "master", "setup"
 
-COLUMNS: List[Column] = [c for c in (
+COLUMNS: List[Column] = [
     # --- Product details -----------------------------------------------
     Column(1, "Product details", "SI#", "SI No", "sequenceNumber", "Mapped", "sequenceNumber", _I),
     Column(2, "Product details", "Code", "Item Code", "productCode", "Mapped", None, _M),
@@ -114,17 +114,7 @@ COLUMNS: List[Column] = [c for c in (
     Column(68, "Selling price setup", "RATE 8", "Rate 8", "product.bulkPrice (product-level)", "Partial", None, _S),
     Column(69, "Selling price setup", "RATE 9", "Rate 9", "", "Missing", None, _S),
     Column(70, "Selling price setup", "RATE 10", "Rate 10", "", "Missing", None, _S),
-)]
-
-assert len(COLUMNS) == 70
-assert all(c.extracted_as is None or c.extracted_as in PurchaseLine.model_fields for c in COLUMNS)
-
-
-def columns_by_group() -> Dict[str, List[Column]]:
-    groups: Dict[str, List[Column]] = {}
-    for col in COLUMNS:
-        groups.setdefault(col.group, []).append(col)
-    return groups
+]
 
 
 def coverage(lines: Iterable[PurchaseLine]) -> List[dict]:

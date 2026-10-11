@@ -13,7 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bill_extractor.column_mapping import COLUMNS, coverage
-from bill_extractor.parser import parse, parse_line_items
+from bill_extractor.parser import _resolve_columns, parse, parse_line_items, to_float
+from bill_extractor.schema import PurchaseLine
 from bill_extractor.purchase import infer_drug_form, parse_pack_size
 
 # Chem Pharma / Fatima Drug Lines layout (invoice C25-73799).
@@ -102,7 +103,7 @@ class FreeRows(unittest.TestCase):
         items = parse_line_items([FREE])
         self.assertEqual(len(items), 1)
         self.assertEqual((items[0].qty, items[0].free_qty), (9.0, 1.0))
-        ln = parse([""][0], [FREE]).purchase_lines[0]
+        ln = parse("", [FREE]).purchase_lines[0]
         self.assertEqual((ln.packs, ln.freePacks, ln.scheme), (9.0, 1.0, "9 + 1"))
         self.assertEqual((ln.quantity, ln.freeQuantity, ln.totalQuantity), (90.0, 10.0, 100.0))
         self.assertEqual(ln.landingCostPerPack, round(260.37 / 10, 2))
@@ -121,6 +122,31 @@ class OtherLayouts(unittest.TestCase):
         self.assertEqual((li.value, li.net_amount, li.gst_amount), (127.08, 133.44, 6.35))
 
 
+class HeaderResolution(unittest.TestCase):
+    def resolved(self, headers):
+        return {k: v for k, v in _resolve_columns(headers).items() if v}
+
+    def test_flattened_multirow_headers(self):  # Super Drug Lines
+        cols = self.resolved(["Item Description", "Quantity.Billed", "Quantity.Free/Repl",
+                              "Trade Price", "Taxable Value", "Net Value"])
+        self.assertEqual((cols["qty"], cols["free"]), ("Quantity.Billed", "Quantity.Free/Repl"))
+        self.assertEqual((cols["amount"], cols["net"]), ("Taxable Value", "Net Value"))
+
+    def test_revised_mrp_and_taxable_over_gross(self):  # Favourate Agencies
+        cols = self.resolved(["Product Name", "Old MRP", "New MRP", "PCs", "Sell Rate",
+                              "Gross Amt", "Taxable Amt", "Net Value"])
+        self.assertEqual((cols["mrp"], cols["qty"], cols["rate"]), ("New MRP", "PCs", "Sell Rate"))
+        self.assertEqual(cols["amount"], "Taxable Amt")
+
+    def test_scheme_qty_is_free_stock(self):  # Bluefox
+        cols = self.resolved(["Particulars", "Qty", "Sch Qty", "Rate"])
+        self.assertEqual((cols["qty"], cols["free"]), ("Qty", "Sch Qty"))
+
+    def test_two_numbers_in_cell(self):  # Kurikkal "Disc. Amt"
+        self.assertEqual(to_float("5.00(2.50)"), 5.0)
+        self.assertEqual(to_float("₹ 1,234.50"), 1234.5)
+
+
 class Catalog(unittest.TestCase):
     def test_catalog_matches_pdf_summary(self):
         self.assertEqual(len(COLUMNS), 70)
@@ -128,6 +154,8 @@ class Catalog(unittest.TestCase):
         self.assertEqual((statuses.count("Mapped"), statuses.count("Partial"),
                           statuses.count("Missing")), (31, 11, 28))
         self.assertEqual([c.no for c in COLUMNS], list(range(1, 71)))
+        for c in COLUMNS:
+            self.assertTrue(c.extracted_as is None or c.extracted_as in PurchaseLine.model_fields, c)
 
     def test_coverage(self):
         rows = {r["field"]: r for r in coverage(parse("", [CHEM]).purchase_lines)}
