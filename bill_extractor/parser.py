@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from .purchase import build_purchase_lines
 from .schema import Invoice, LineItem, Party, RawOutput, TaxLine, Totals
 
 # --- regexes ---------------------------------------------------------------
@@ -341,9 +342,68 @@ def _is_tax_table(headers: List[str]) -> bool:
 def _is_line_item_table(headers: List[str]) -> bool:
     joined = " ".join(_norm(h) for h in headers)
     has_qty = "qty" in joined or "quantity" in joined
-    has_value = "value" in joined or "amount" in joined
+    has_value = "value" in joined or "amount" in joined or "amt" in joined
     has_hsn = "hsn" in joined
-    return has_hsn and (has_qty or has_value) and not _is_tax_table(headers)
+    has_batch_mrp = "batch" in joined and "mrp" in joined
+    return (has_hsn or has_batch_mrp) and (has_qty or has_value) and not _is_tax_table(headers)
+
+
+# Header synonyms (after ``_norm``) per logical column, seen across the supplier
+# templates (Chem Pharma, Fatima group, Kurikkal, Bluefox, Alankar, KIMS...).
+# ``exact`` names win over ``contains`` fragments, so "Qty" beats "Sch Qty".
+_COLUMN_SYNONYMS: Dict[str, Dict[str, tuple]] = {
+    "sln": {"exact": ("sln", "slno", "sno", "si", "sl")},
+    "group": {"exact": ("groupitem", "item")},
+    "desc": {"exact": ("description", "particulars", "product", "productname", "products",
+                       "itemdescription", "descriptionofgoods", "itemname"),
+             "contains": ("descr", "particular")},
+    "hsn": {"exact": ("hsn", "hsncode", "hsnsac"), "contains": ("hsn",)},
+    "mfr": {"exact": ("mfr", "mfac", "manf", "manuf", "mfg", "manufacturer", "mkt")},
+    "pack": {"exact": ("pkg", "pack", "packing", "packsize")},
+    "batch": {"exact": ("batch", "batchno", "batchcode"), "contains": ("batch",)},
+    "expiry": {"exact": ("exdt", "expd", "exp", "expiry", "expdate", "expirydate"),
+               "contains": ("expiry", "exdt")},
+    "mrp": {"exact": ("mrp",), "contains": ("mrp",)},
+    "qty": {"exact": ("qty", "quantity", "billed", "eaqty"), "contains": ()},
+    "free": {"exact": ("free", "fr", "freeqty", "freerepl")},
+    "replace": {"exact": ("replace", "repl", "replacement", "replqty")},
+    "rate": {"exact": ("rate", "srate", "tradeprice", "ptr")},
+    "disc_pct": {"exact": ("dis", "disc", "discpct", "discount", "dispct")},
+    "disc_amt": {"exact": ("discamt", "disamt", "discamount")},
+    "sch_disc": {"exact": ("schdisc", "schdis", "scheme")},
+    "gst_pct": {"exact": ("gst", "gstpct", "tax", "taxpct", "gstrate")},
+    "gst_amt": {"exact": ("gstamt", "gstamount", "taxamt", "taxamount")},
+    "cgst_amt": {"exact": ("cgstamt", "cgst")},
+    "sgst_amt": {"exact": ("sgstamt", "sgst")},
+    "cess_amt": {"exact": ("cessamt", "cess")},
+    "amount": {"exact": ("amount", "amt", "grossamt", "grossamount", "gross", "taxablevalue",
+                         "taxable", "taxableamt", "value", "netvalue")},
+    "net": {"exact": ("netamt", "netamount", "total", "totalamt", "lineamount")},
+}
+
+
+def _resolve_columns(headers: List[str]) -> Dict[str, Optional[str]]:
+    """Map each logical column to the (first) matching header, or ``None``."""
+    normed = [(h, _norm(h)) for h in headers]
+    used: set[str] = set()
+    cols: Dict[str, Optional[str]] = {}
+    # "net" is resolved before "amount" so a lone "Total"/"Net Amt." column is
+    # not swallowed as the taxable amount.
+    order = [k for k in _COLUMN_SYNONYMS if k not in ("amount",)] + ["amount"]
+    for key in order:
+        spec = _COLUMN_SYNONYMS[key]
+        found = next((h for h, n in normed if h not in used and n in spec["exact"]), None)
+        if found is None:
+            found = next((h for h, n in normed
+                          if h not in used and any(f in n for f in spec.get("contains", ()))), None)
+        if found is not None:
+            used.add(found)
+        cols[key] = found
+    return cols
+
+
+def _is_free_marker(text: Optional[str]) -> bool:
+    return bool(text) and text.strip().lower() in ("free", "f", "foc")
 
 
 def parse_line_items(tables: List[List[Dict[str, Any]]]) -> List[LineItem]:
@@ -354,33 +414,51 @@ def parse_line_items(tables: List[List[Dict[str, Any]]]) -> List[LineItem]:
         headers = list(rows[0].keys())
         if not _is_line_item_table(headers):
             continue
-
-        col_sln = _match_col(headers, "sln", "sno", "slno", "sl")
-        col_group = _match_col(headers, "group", "item", "particular")
-        col_desc = _match_col(headers, "description", "desc")
-        col_hsn = _match_col(headers, "hsn")
-        col_mrp = _match_col(headers, "mrp")
-        col_rate = _match_col(headers, "rate")
-        col_qty = _match_col(headers, "qty", "quantity")
-        col_uom = _match_col(headers, "uom", "unit")
-        col_value = _match_col(headers, "value", "amount")
+        cols = _resolve_columns(headers)
 
         for row in rows:
             label_text = _norm(" ".join(str(v) for v in row.values() if v))
             # Skip embedded total / tax rows.
             if any(k in label_text for k in ("total", "grandtotal", "stategst", "centralgst")):
                 continue
+            g = lambda key: _get(row, cols[key])  # noqa: E731
+            description = g("desc") or g("group")
+            qty = to_float(g("qty"))
             item = LineItem(
-                sln=_get(row, col_sln),
-                group_item=_get(row, col_group),
-                description=_get(row, col_desc) or _get(row, col_group),
-                hsn_code=_get(row, col_hsn),
-                mrp=to_float(_get(row, col_mrp)),
-                rate=to_float(_get(row, col_rate)),
-                qty=to_float(_get(row, col_qty)),
-                uom=_get(row, col_uom),
-                value=to_float(_get(row, col_value)),
+                sln=g("sln"),
+                group_item=g("group"),
+                description=description,
+                hsn_code=g("hsn"),
+                mfr=g("mfr"),
+                pack=g("pack"),
+                batch=g("batch"),
+                expiry=g("expiry"),
+                mrp=to_float(g("mrp")),
+                rate=to_float(g("rate")),
+                qty=qty,
+                free_qty=to_float(g("free")),
+                replace_qty=to_float(g("replace")),
+                uom=None,
+                discount_pct=to_float(g("disc_pct")),
+                discount_amount=to_float(g("disc_amt")),
+                sch_discount_pct=to_float(g("sch_disc")),
+                gst_pct=to_float(g("gst_pct")),
+                gst_amount=to_float(g("gst_amt")),
+                cgst_amount=to_float(g("cgst_amt")),
+                sgst_amount=to_float(g("sgst_amt")),
+                cess_amount=to_float(g("cess_amt")),
+                value=to_float(g("amount")),
+                net_amount=to_float(g("net")),
             )
+            # Suppliers print scheme stock as a second row with rate "Free".
+            if _is_free_marker(g("rate")) and qty is not None:
+                prev = items[-1] if items else None
+                same = (prev is not None and prev.batch == item.batch
+                        and prev.description == item.description)
+                if same:
+                    prev.free_qty = (prev.free_qty or 0) + qty
+                    continue
+                item.free_qty, item.qty, item.rate = qty, 0.0, None
             # Require at least an HSN or a value to count as a real line.
             if item.hsn_code or item.value is not None:
                 items.append(item)
@@ -567,6 +645,7 @@ def parse(markdown: str, tables: List[List[Dict[str, Any]]]) -> Invoice:
     invoice.tax_summary = parse_tax_summary(tables) or parse_tax_summary_text(markdown)
     invoice.totals = parse_totals(markdown, tables)
     _reconcile_totals(invoice)
+    invoice.purchase_lines = build_purchase_lines(invoice.line_items)
     invoice.raw = RawOutput(markdown=markdown, tables=tables)
     return invoice
 
