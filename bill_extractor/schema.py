@@ -52,6 +52,14 @@ class LineItem(BaseModel):
     gst_pct: Optional[float] = None
     gst_amount: Optional[float] = None
     value: Optional[float] = None
+    # Extra columns used by the purchase-invoice mapping (see purchase.py).
+    replace_qty: Optional[float] = None
+    discount_amount: Optional[float] = None
+    sch_discount_pct: Optional[float] = None
+    cgst_amount: Optional[float] = None
+    sgst_amount: Optional[float] = None
+    cess_amount: Optional[float] = None
+    net_amount: Optional[float] = None
 
 
 class TaxLine(BaseModel):
@@ -83,6 +91,59 @@ class Totals(BaseModel):
     grand_total: Optional[float] = None
 
 
+class PurchaseLine(BaseModel):
+    """One purchase-invoice line in the AI Pharma data model.
+
+    Field names follow the "Our field" column of the Purchase Invoice column
+    mapping. Quantities and prices are normalised to both pack and unit level
+    (``packs`` x ``packSize`` = ``quantity``). Anything not printed on a supplier
+    invoice (product master data, selling-price setup) is left out; see
+    ``column_mapping.py`` for the full 70-column catalog.
+    """
+
+    sequenceNumber: Optional[int] = None
+    itemName: Optional[str] = None
+    manufacturer: Optional[str] = None
+    hsnCode: Optional[str] = None
+    drugForm: Optional[str] = None
+    packLabel: Optional[str] = None
+    packSize: Optional[int] = None
+
+    batch: Optional[str] = None
+    expiryDate: Optional[str] = None
+
+    packs: Optional[float] = None
+    freePacks: Optional[float] = None
+    replacementPacks: Optional[float] = None
+    quantity: Optional[float] = None
+    freeQuantity: Optional[float] = None
+    replacementQuantity: Optional[float] = None
+    totalQuantity: Optional[float] = None
+    scheme: Optional[str] = None
+
+    mrpPerPack: Optional[float] = None
+    mrp: Optional[float] = None
+    ratePerPack: Optional[float] = None
+    purchaseRate: Optional[float] = None
+
+    grossAmount: Optional[float] = None
+    discountPercent: Optional[float] = None
+    discountAmount: Optional[float] = None
+    specialDiscountPercent: Optional[float] = None
+    specialDiscountAmount: Optional[float] = None
+    purchaseAmount: Optional[float] = None
+
+    taxPercent: Optional[float] = None
+    cgstAmount: Optional[float] = None
+    sgstAmount: Optional[float] = None
+    cessAmount: Optional[float] = None
+    taxAmount: Optional[float] = None
+    billedAmount: Optional[float] = None
+
+    landingCostPerPack: Optional[float] = None
+    landingCostPerUnit: Optional[float] = None
+
+
 class RawOutput(BaseModel):
     """Raw Docling output retained as a safety net / for debugging."""
 
@@ -108,6 +169,7 @@ class Invoice(BaseModel):
     packet_no: Optional[str] = None
 
     line_items: List[LineItem] = Field(default_factory=list)
+    purchase_lines: List[PurchaseLine] = Field(default_factory=list)
     tax_summary: List[TaxLine] = Field(default_factory=list)
     totals: Totals = Field(default_factory=Totals)
 

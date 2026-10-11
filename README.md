@@ -100,7 +100,8 @@ The top-level `Invoice` object contains:
 | `bill_to`, `ship_to` | Buyer / consignee `Party` blocks |
 | `invoice_no`, `invoice_date` | Invoice identifiers |
 | `transporter`, `destination`, `lr_no`, `agent`, `doc_no`, `packet_no` | Logistics metadata |
-| `line_items[]` | `LineItem`: sln, group_item, description, hsn_code, mrp, rate, qty, uom, value |
+| `line_items[]` | `LineItem`: sln, description, hsn_code, mfr, pack, batch, expiry, mrp, rate, qty, free_qty, replace_qty, discount, gst, value (taxable), net_amount, ... |
+| `purchase_lines[]` | `PurchaseLine`: each line normalised to the AI Pharma purchase-invoice model (see below) |
 | `tax_summary[]` | `TaxLine`: hsn_sac, taxable_amount, cgst/sgst/igst rate & amount |
 | `totals` | `Totals`: total_qty, taxable_amount, sgst, cgst, igst, grand_total |
 | `amount_in_words`, `challan_no`, `so_no` | Misc invoice fields |
@@ -110,6 +111,36 @@ The top-level `Invoice` object contains:
 Every field is optional and degrades to `null` when OCR can't recover it, so the
 extractor never fails on an imperfect scan. When a field looks wrong, the
 `raw.markdown` / `raw.tables` payload lets you recover or re-map it.
+
+## Purchase-invoice column mapping
+
+`Purchase_Invoice_Column_Mapping.pdf` maps 70 EqSoft / AI Pharma line-item
+columns onto our data model. The pipeline implements it in two layers:
+
+1. **Docling table -> `LineItem`**: `parser.parse_line_items` resolves each
+   table header through a synonym map (`PKG.`/`Packing`, `EX.DT`/`Exp`/`Expiry`,
+   `M.R.P`, `Net Amt.`/`Total`, ...), so the different supplier layouts (Chem
+   Pharma, Fatima group, Bluefox, Kurikkal, KIMS, ...) land in the same fields.
+   Scheme stock printed as a second `Free` row is merged into `free_qty`.
+2. **`LineItem` -> `PurchaseLine`** (`purchase.py`): normalises pack vs unit
+   figures using the pack size parsed from the pack label (`10's` -> 10,
+   `100ML`/`30Gr` -> 1):
+
+   | Field | Rule |
+   |-------|------|
+   | `quantity` / `freeQuantity` / `totalQuantity` | packs x `packSize` |
+   | `mrp`, `purchaseRate` | `mrpPerPack`, `ratePerPack` / `packSize` |
+   | `grossAmount` | packs x rate; `discountAmount` printed or implied by gross vs amount |
+   | `cgstAmount` / `sgstAmount` | printed, else tax / 2 (intra-state) |
+   | `landingCostPerPack` / `PerUnit` | `purchaseAmount` / (packs + free + replacement), then / `packSize` |
+   | `scheme` | `"<packs> + <free>"` e.g. `"9 + 1"` |
+
+`bill_extractor.column_mapping.COLUMNS` holds the full 70-row catalog with each
+column's source: `invoice`, `derived`, `master` (barcode, composition, brand,
+schedule... resolved downstream from `itemName`/`hsnCode`) or `setup`
+(godown, price levels, margins - never on a supplier invoice).
+`column_mapping.coverage(invoice.purchase_lines)` reports how many lines filled
+each targeted column. Run the tests with `python -m unittest discover tests`.
 
 ## Supported templates & examples
 

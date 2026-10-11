@@ -1,0 +1,139 @@
+"""Tests for the purchase-invoice column mapping.
+
+Tables below mirror what Docling's TableFormer yields for the photographed
+supplier invoices (header row -> list of row dicts), so the header-synonym
+matching and the pack/unit maths are exercised without needing OCR models.
+Run with: python -m unittest discover tests
+"""
+
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from bill_extractor.column_mapping import COLUMNS, coverage
+from bill_extractor.parser import parse, parse_line_items
+from bill_extractor.purchase import infer_drug_form, parse_pack_size
+
+# Chem Pharma / Fatima Drug Lines layout (invoice C25-73799).
+CHEM = [
+    {"MFR": "SUN", "HSN": "30049099", "DESCRIPTION": "LIOFEN 10 TAB *", "PKG.": "10's",
+     "BATCH": "SIG0215A", "EX.DT": "12-26", "M.R.P": "124.84", "QTY": "2", "RATE": "95.12",
+     "DIS%": "", "Amount": "190.24", "GST %": "5", "GST AMT": "9.52", "Net Amt.": "199.76"},
+    {"MFR": "GLAXO", "HSN": "30043990", "DESCRIPTION": "ELTROXIN 100 TAB", "PKG.": "120's",
+     "BATCH": "MW8W", "EX.DT": "01-27", "M.R.P": "168.84", "QTY": "2", "RATE": "128.64",
+     "DIS%": "", "Amount": "257.28", "GST %": "5", "GST AMT": "12.86", "Net Amt.": "270.14"},
+]
+
+# Fatima Drug Lines F25-74317: scheme stock printed as a second "Free" row.
+FREE = [
+    {"MFR": "DABUR", "HSN": "30049011", "DESCRIPTION": "PUDIN HARA CAP", "PKG.": "10's",
+     "BATCH": "BD03224", "EX.DT": "05-27", "M.R.P": "32.81", "QTY": "9", "RATE": "28.93",
+     "DIS%": "", "Amount": "260.37", "GST %": "5", "GST AMT": "13.02", "Net Amt.": "273.39"},
+    {"MFR": "DABUR", "HSN": "30049011", "DESCRIPTION": "PUDIN HARA CAP", "PKG.": "10's",
+     "BATCH": "BD03224", "EX.DT": "05-27", "M.R.P": "32.81", "QTY": "1", "RATE": "Free",
+     "DIS%": "", "Amount": "", "GST %": "5", "GST AMT": "", "Net Amt.": ""},
+]
+
+# Bluefox layout (Fatima Healthcare 66281): "Sch Qty" must not win over "Qty".
+BLUEFOX = [
+    {"SNo": "1", "Rack": "A104", "Mfac": "EYSYS", "Particulars": "GLISIMET M2", "Packing": "14'S",
+     "HSN": "30049099", "BatchNo": "SGY0077", "Exp": "01/27", "Qty": "4", "Sch Qty": "x",
+     "MRP": "104.36", "Rate": "79.51", "Sch. Disc": "0.00", "Disc %": "", "GST %": "5",
+     "Taxable Value": "318.04"},
+]
+
+# Kurikkal layout: explicit discount amount and a line total incl. GST.
+KURIKKAL = [
+    {"S.No": "1", "HSN/SAC": "30045090", "MFR": "EXMO", "Products": "EXFER-Z TAB", "Pack": "10'S",
+     "Qty": "2", "Batch": "LTA-50390F", "Expiry": "09/27", "M.R.P": "83.400", "Rate": "63.540",
+     "Disc. Amt": "0.00(0.00)", "Sch. Disc.": "0.00(0.00)", "Amount": "127.08", "GST%": "5.00",
+     "GST Amt": "6.35", "Total": "133.44"},
+]
+
+
+class PackAndForm(unittest.TestCase):
+    def test_pack_size(self):
+        cases = {"10's": 10, "15s": 15, "14'S": 14, "1X10": 10, "1'S": 1, "120's": 120,
+                 "30Gr": 1, "100 ML": 1, "1X60ML": 1, "250gm": 1, "1kit": 1, "": None, None: None}
+        for label, expected in cases.items():
+            self.assertEqual(parse_pack_size(label), expected, label)
+
+    def test_drug_form(self):
+        self.assertEqual(infer_drug_form("LIOFEN 10 TAB *"), "Tablet")
+        self.assertEqual(infer_drug_form("Lycor 1.0% Cream"), "Cream")
+        self.assertEqual(infer_drug_form("LEEDS SYRUP"), "Syrup")
+        self.assertIsNone(infer_drug_form("ENSURE VANILA 950GM"))
+
+
+class ChemPharmaLayout(unittest.TestCase):
+    def setUp(self):
+        self.inv = parse("INVOICE\nCHEM PHARMA\n", [CHEM])
+        self.line = self.inv.purchase_lines[0]
+
+    def test_line_item_columns(self):
+        li = self.inv.line_items[0]
+        self.assertEqual((li.mfr, li.pack, li.batch, li.expiry), ("SUN", "10's", "SIG0215A", "12-26"))
+        self.assertEqual((li.qty, li.rate, li.gst_pct, li.gst_amount), (2.0, 95.12, 5.0, 9.52))
+        self.assertEqual((li.value, li.net_amount), (190.24, 199.76))
+
+    def test_pack_and_unit_maths(self):
+        ln = self.line
+        self.assertEqual((ln.packSize, ln.packs, ln.quantity, ln.totalQuantity), (10, 2.0, 20.0, 20.0))
+        self.assertEqual((ln.mrpPerPack, ln.mrp), (124.84, 12.484))
+        self.assertEqual((ln.ratePerPack, ln.purchaseRate), (95.12, 9.512))
+
+    def test_amounts_and_tax(self):
+        ln = self.line
+        self.assertEqual((ln.grossAmount, ln.purchaseAmount), (190.24, 190.24))
+        self.assertEqual((ln.taxPercent, ln.taxAmount, ln.billedAmount), (5.0, 9.52, 199.76))
+        self.assertEqual((ln.cgstAmount, ln.sgstAmount), (4.76, 4.76))
+        self.assertEqual((ln.landingCostPerPack, ln.landingCostPerUnit), (95.12, 9.512))
+        self.assertEqual(ln.expiryDate, "12/26")
+        self.assertEqual(ln.drugForm, "Tablet")
+
+    def test_120_pack(self):
+        self.assertEqual(self.inv.purchase_lines[1].packSize, 120)
+
+
+class FreeRows(unittest.TestCase):
+    def test_free_row_merges_into_scheme(self):
+        items = parse_line_items([FREE])
+        self.assertEqual(len(items), 1)
+        self.assertEqual((items[0].qty, items[0].free_qty), (9.0, 1.0))
+        ln = parse([""][0], [FREE]).purchase_lines[0]
+        self.assertEqual((ln.packs, ln.freePacks, ln.scheme), (9.0, 1.0, "9 + 1"))
+        self.assertEqual((ln.quantity, ln.freeQuantity, ln.totalQuantity), (90.0, 10.0, 100.0))
+        self.assertEqual(ln.landingCostPerPack, round(260.37 / 10, 2))
+
+
+class OtherLayouts(unittest.TestCase):
+    def test_bluefox_qty_not_sch_qty(self):
+        ln = parse("", [BLUEFOX]).purchase_lines[0]
+        self.assertEqual((ln.packs, ln.packSize, ln.quantity), (4.0, 14, 56.0))
+        self.assertEqual((ln.purchaseAmount, ln.taxPercent, ln.taxAmount, ln.billedAmount),
+                         (318.04, 5.0, 15.9, 333.94))
+        self.assertEqual(ln.sequenceNumber, 1)
+
+    def test_kurikkal_total_column(self):
+        li = parse_line_items([KURIKKAL])[0]
+        self.assertEqual((li.value, li.net_amount, li.gst_amount), (127.08, 133.44, 6.35))
+
+
+class Catalog(unittest.TestCase):
+    def test_catalog_matches_pdf_summary(self):
+        self.assertEqual(len(COLUMNS), 70)
+        statuses = [c.status for c in COLUMNS]
+        self.assertEqual((statuses.count("Mapped"), statuses.count("Partial"),
+                          statuses.count("Missing")), (31, 11, 28))
+        self.assertEqual([c.no for c in COLUMNS], list(range(1, 71)))
+
+    def test_coverage(self):
+        rows = {r["field"]: r for r in coverage(parse("", [CHEM]).purchase_lines)}
+        self.assertEqual(rows["batch"]["filled"], 2)
+        self.assertEqual(rows["freePacks"]["filled"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
