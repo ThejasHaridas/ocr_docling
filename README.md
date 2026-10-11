@@ -142,6 +142,17 @@ schedule... resolved downstream from `itemName`/`hsnCode`) or `setup`
 `column_mapping.coverage(invoice.purchase_lines)` reports how many lines filled
 each targeted column. Run the tests with `python -m unittest discover tests`.
 
+### End-to-end check
+
+`examples/e2e_check.py` runs a folder of invoice photos through the full
+Docling pipeline and checks each invoice against its own printed totals: the
+sum of line `billedAmount` vs. the grand total, and line `purchaseAmount` vs.
+the GST table's taxable total, plus the fill rate of the mapped columns.
+
+```bash
+python examples/e2e_check.py ./invoices -o ./out
+```
+
 ## Supported templates & examples
 
 The rule-based layer is designed to generalise across invoice layouts. The
