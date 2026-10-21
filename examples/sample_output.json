@@ -4,9 +4,9 @@
     "address_lines": [],
     "city": null,
     "state": null,
-    "state_code": "32",
+    "state_code": null,
     "pin": null,
-    "phone": "6282772085",
+    "phone": "9947799887",
     "email": "info@raajaram.com",
     "gstin": "32ABKFR5951J1ZV",
     "pan": "ABKFR5951J",
@@ -21,9 +21,7 @@
       "Malappuram",
       "Kerala, State Code: 32",
       "PIN Code: 679331",
-      "India",
-      "Phone: 6282772085",
-      "GSTIN: 32ARBPJ2182L1ZX"
+      "India"
     ],
     "city": null,
     "state": null,
@@ -44,9 +42,7 @@
       "Malappuram",
       "Kerala, State Code: 32",
       "PIN Code: 679331",
-      "India",
-      "Phone: 6282772085",
-      "GSTIN: 32ARBPJ2182L1ZX"
+      "India"
     ],
     "city": null,
     "state": null,

@@ -42,6 +42,8 @@ Environment variables:
 | `BILL_EXTRACTOR_BACKEND` | `auto` (default: Docling, falling back to text if models are blocked), `docling` (force Docling), or `text` (pypdfium2 text extraction — no models, digital PDFs only) |
 | `BILL_EXTRACTOR_OCR` | OCR engine: `auto` (default), `rapidocr`, `easyocr`, `tesseract`, `tesseract_cli` |
 | `BILL_EXTRACTOR_ARTIFACTS` | Path to a local Docling model cache (offline use) |
+| `BILL_EXTRACTOR_BUYER_GSTIN` | Your own GSTIN(s), comma-separated. Purchase bills print both parties' GSTINs; naming yours makes seller/buyer assignment exact |
+| `BILL_EXTRACTOR_CELL_MATCHING` | `1` (default) or `0`. Try `0` when a bill's header words run together (`HSNCODEGST%`) and columns come out shifted |
 
 If models can't be fetched, the CLI exits with a clear, actionable message
 instead of a stack trace.
@@ -172,6 +174,23 @@ Across these templates the extractor reliably pulls seller identity (name /
 GSTIN / PAN), invoice number & date, line items (incl. pharma fields: MFR, HSN,
 batch, expiry, MRP, qty, rate, GST% & amount), the GST tax summary, totals
 (taxable, discount, round-off, grand total) and the amount in words.
+
+### Photographed bills
+
+Docling's table model can mis-align columns on phone photos (merged header
+words, tick marks over cells, no gridlines) or miss the table entirely. The
+parser therefore checks every line item (numeric HSN, `qty x rate = amount`)
+and, when most rows don't add up, re-parses the row text from Docling's
+markdown with an order-free parser: tokens are classified by shape (HSN,
+batch, expiry, pack, money) and qty / rate / amount are pinned by arithmetic,
+so a qty hidden under a tick is recovered as `amount / rate`. Seller vs buyer
+is decided from the `To` block, the `For <SELLER>` signature line and, best of
+all, `BILL_EXTRACTOR_BUYER_GSTIN`. OCR letter/digit swaps inside GSTINs
+(`N1Z2` read as `NIZ2`) are repaired. `tests/fixture_nilambur.py` holds three
+such bills.
+
+OCR can still misread digits it can't see (e.g. an HSN under a pen mark);
+those come through as read.
 
 ### Known limitations
 

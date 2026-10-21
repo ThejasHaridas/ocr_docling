@@ -10,6 +10,8 @@ Configuration via environment variables (all optional):
                                    ``easyocr``, ``tesseract`` or ``tesseract_cli``.
   * ``BILL_EXTRACTOR_ARTIFACTS`` — path to a local Docling model cache, for
                                    offline / air-gapped use (see README).
+  * ``BILL_EXTRACTOR_CELL_MATCHING`` — ``1`` (default) or ``0`` to let the
+                                   table model split cells OCR merged.
   * ``BILL_EXTRACTOR_BACKEND``   — ``auto`` (default: Docling, falling back to
                                    the text backend if models are unreachable),
                                    ``docling`` (force Docling), or ``text``
@@ -53,7 +55,18 @@ def _pipeline_options():
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_ocr = True
     pipeline_options.do_table_structure = True
-    pipeline_options.table_structure_options.do_cell_matching = True
+    # ACCURATE TableFormer copes better with skewed photos and borderless
+    # tables. Cell matching snaps table cells to OCR words; when one OCR word
+    # spans several header columns ("HSNCODEGST%") turning it off lets the
+    # table model split them (BILL_EXTRACTOR_CELL_MATCHING=0).
+    try:
+        from docling.datamodel.pipeline_options import TableFormerMode
+
+        pipeline_options.table_structure_options.mode = TableFormerMode.ACCURATE
+    except ImportError:  # older Docling
+        pass
+    pipeline_options.table_structure_options.do_cell_matching = (
+        os.getenv("BILL_EXTRACTOR_CELL_MATCHING", "1") != "0")
 
     artifacts = os.getenv("BILL_EXTRACTOR_ARTIFACTS")
     if artifacts:

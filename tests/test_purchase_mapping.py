@@ -188,6 +188,67 @@ class BlueFoxFatimaHouse(unittest.TestCase):
         self.assertEqual([(x.hsn_sac, x.sgst_rate, x.sgst_amount) for x in tax], [("5%", 2.5, 39.5)])
 
 
+class NilamburBills(unittest.TestCase):
+    """Kottakuth / Surya / Malabar photos where the live Docling run lost data."""
+
+    @classmethod
+    def setUpClass(cls):
+        import fixture_nilambur as F
+        cls.kottakuth = parse(F.KOTTAKUTH_MD, F.KOTTAKUTH_TABLES)
+        cls.surya = parse(F.SURYA_MD, [])
+        cls.malabar = parse(F.MALABAR_MD, [])
+
+    def test_seller_and_buyer_not_swapped(self):
+        for inv, name, gstin in ((self.kottakuth, "KOTTAKUTH DRUGS & SURGICALS", "32AEEPM3866Q2ZY"),
+                                 (self.surya, "SURYA PHARMA", "32GDHPP8475E1Z7"),
+                                 (self.malabar, "MALABAR DRUG LINES", "32AADFM8699L1ZM")):
+            self.assertEqual((inv.seller.name, inv.seller.gstin), (name, gstin))
+            self.assertEqual((inv.bill_to.name, inv.bill_to.gstin), ("ROSE MEDICALS", "32AYXPC3443N1Z2"))
+        self.assertEqual(self.kottakuth.bill_to.dl_no, "KL-MLP-141950/20,141951/21/19")
+        self.assertIsNone(self.kottakuth.bill_to.pin)  # "Ph : 277222" is a landline
+
+    def test_invoice_numbers(self):
+        self.assertEqual([(i.invoice_no, i.invoice_date) for i in (self.kottakuth, self.surya, self.malabar)],
+                         [("2751", "25/11/2025"), ("2649", "25/11/2025"), ("HM32622", "25/11/2025")])
+
+    def test_totals(self):
+        k, s, m = self.kottakuth.totals, self.surya.totals, self.malabar.totals
+        self.assertEqual((k.taxable_amount, k.sgst, k.tax_amount, k.grand_total, k.round_off, k.total_qty),
+                         (495.0, 12.38, 24.75, 520.0, 0.25, 3.0))
+        self.assertEqual((s.taxable_amount, s.sgst, s.grand_total, s.round_off), (1219.96, 30.5, 1281.0, 0.04))
+        self.assertEqual((m.taxable_amount, m.sgst, m.cgst, m.grand_total, m.round_off, m.total_qty, m.total_items),
+                         (1960.79, 114.88, 114.88, 2191.0, 0.45, 13.0, 8.0))
+
+    def test_tax_summary(self):
+        self.assertEqual([(t.hsn_sac, t.taxable_amount, t.sgst_amount) for t in self.malabar.tax_summary],
+                         [("5%", 947.4, 23.68), ("18%", 1013.39, 91.2)])
+        self.assertEqual([(t.hsn_sac, t.taxable_amount, t.cgst_amount) for t in self.kottakuth.tax_summary],
+                         [("5%", 495.0, 12.38)])
+
+    def test_misaligned_table_falls_back_to_row_text(self):
+        rows = [(li.hsn_code, li.mfr, li.batch, li.expiry, li.pack, li.qty, li.rate, li.mrp, li.value)
+                for li in self.kottakuth.line_items]
+        self.assertEqual(rows, [("96190090", "HYGI", "AMIY24", "8/29", "10'S", 1.0, 165.0, 656.25, 165.0),
+                                ("96190090", "HYGI", "AA008", "5/28", "10'S", 2.0, 165.0, 656.0, 330.0)])
+
+    def test_rows_without_table(self):
+        s = [(li.description, li.hsn_code, li.batch, li.qty, li.rate, li.mrp, li.value)
+             for li in self.surya.line_items]
+        self.assertEqual(s, [("STIM ORTHO MB", "96032100", "DMB-10-25", 12.0, 74.58, 98.0, 894.96),
+                             ("UNDERPADS-60X90 -TIDY", "961900", "CD54613JA", 2.0, 162.5, 1450.0, 325.0)])
+        m = self.malabar.line_items
+        self.assertEqual(len(m), 8)
+        self.assertEqual(round(sum(li.value for li in m), 2), 1960.79)
+        self.assertEqual((m[5].description, m[5].qty, m[5].gst_pct), ("UVedge SPF 50 SUNSCREEN GEL", 2.0, 18.0))
+        self.assertEqual([li.mfr for li in m][:3], ["CANBR", "EXMO", "CIPLA"])
+
+    def test_gstin_ocr_repair(self):
+        from bill_extractor.parser import fix_gstin_ocr
+        self.assertEqual(fix_gstin_ocr("GST No: 32AYXPC3443NIZ2"), "GST No: 32AYXPC3443N1Z2")
+        self.assertEqual(fix_gstin_ocr("GSTNo:32AYXPC3443N122"), "GSTNo:32AYXPC3443N1Z2")
+        self.assertEqual(fix_gstin_ocr("32AEEPM3866Q2ZY"), "32AEEPM3866Q2ZY")
+
+
 class Catalog(unittest.TestCase):
     def test_catalog_matches_pdf_summary(self):
         self.assertEqual(len(COLUMNS), 70)
