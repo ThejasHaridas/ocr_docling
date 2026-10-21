@@ -139,6 +139,10 @@ columns onto our data model. The pipeline implements it in two layers:
 column's source: `invoice`, `derived`, `master` (barcode, composition, brand,
 schedule... resolved downstream from `itemName`/`hsnCode`) or `setup`
 (godown, price levels, margins - never on a supplier invoice).
+`column_mapping.OCR_HEADERS` lists the invoice header spellings from the mapping
+sheet's *OCR* column (`DESCRIPTION`/`Products`/`Item Description`, `EX.DT`/`Expiry
+Date`, `DIS%`/`DISC %`, `GST%`/`TAX %`, `Net Amt`/`Net Amount`/`grand total`, ...);
+the tests check that every one of them is extracted.
 `column_mapping.coverage(invoice.purchase_lines)` reports how many lines filled
 each targeted column. Run the tests with `python -m unittest discover tests`.
 

@@ -378,7 +378,7 @@ _COLUMN_SYNONYMS: Dict[str, Dict[str, tuple]] = {
     "cess_amt": {"exact": ("cessamt", "cess")},
     "amount": {"exact": ("amount", "amt", "grossamt", "grossamount", "gross", "taxablevalue",
                          "taxable", "taxableamt", "value", "netvalue")},
-    "net": {"exact": ("netamt", "netamount", "total", "totalamt", "lineamount")},
+    "net": {"exact": ("netamt", "netamount", "total", "totalamt", "lineamount", "grandtotal")},
 }
 
 

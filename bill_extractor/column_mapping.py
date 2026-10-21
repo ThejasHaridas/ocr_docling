@@ -16,7 +16,7 @@ extractor fills for the column (``None`` for ``master``/``setup`` columns).
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, NamedTuple, Optional
+from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from .schema import PurchaseLine
 
@@ -118,6 +118,27 @@ COLUMNS: List[Column] = [c for c in (
 
 assert len(COLUMNS) == 70
 assert all(c.extracted_as is None or c.extracted_as in PurchaseLine.model_fields for c in COLUMNS)
+
+
+# Invoice header spellings per column, from the "OCR" column of the mapping
+# sheet. Every header here must resolve through ``parser._COLUMN_SYNONYMS``.
+OCR_HEADERS: Dict[int, Tuple[str, ...]] = {
+    4: ("DESCRIPTION", "Products", "Item Description"),
+    10: ("MFR", "Manufacturer"),
+    17: ("HSN", "HSN/SAC"),
+    22: ("PKG", "Pack"),
+    24: ("BATCH",),
+    26: ("EX.DT", "Expiry Date", "Expiry"),
+    31: ("QTY", "Quantity"),
+    36: ("M.R.P", "MRP"),
+    38: ("RATE",),
+    43: ("DIS%", "DISC %"),
+    49: ("AMOUNT",),
+    50: ("GST%", "TAX %"),
+    54: ("Net Amt", "Net Amount", "grand total"),
+}
+
+assert all(COLUMNS[no - 1].extracted_as for no in OCR_HEADERS)
 
 
 def columns_by_group() -> Dict[str, List[Column]]:
