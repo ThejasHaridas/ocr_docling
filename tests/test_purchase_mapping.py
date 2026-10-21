@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bill_extractor.column_mapping import COLUMNS, coverage
+from bill_extractor.column_mapping import COLUMNS, OCR_HEADERS, coverage
 from bill_extractor.parser import parse, parse_line_items
 from bill_extractor.purchase import infer_drug_form, parse_pack_size
 
@@ -119,6 +119,38 @@ class OtherLayouts(unittest.TestCase):
     def test_kurikkal_total_column(self):
         li = parse_line_items([KURIKKAL])[0]
         self.assertEqual((li.value, li.net_amount, li.gst_amount), (127.08, 133.44, 6.35))
+
+
+class OcrHeaders(unittest.TestCase):
+    """Every header in the mapping sheet's "OCR" column is extracted."""
+
+    # PurchaseLine field filled from each OCR column, with the sample value below.
+    EXPECTED = {4: ("itemName", "AMOXIL 500 CAP"), 10: ("manufacturer", "GSK"),
+                17: ("hsnCode", "30041010"), 22: ("packSize", 10), 24: ("batch", "AMX2401"),
+                26: ("expiryDate", "03/28"), 31: ("packs", 50.0), 36: ("mrpPerPack", 120.0),
+                38: ("ratePerPack", 77.14), 43: ("discountPercent", 5.0),
+                49: ("purchaseAmount", 3664.15), 50: ("taxPercent", 12.0),
+                54: ("billedAmount", 4103.85)}
+    VALUES = {4: "AMOXIL 500 CAP", 10: "GSK", 17: "30041010", 22: "10's", 24: "AMX2401",
+              26: "03-28", 31: "50", 36: "120.00", 38: "77.14", 43: "5", 49: "3664.15",
+              50: "12", 54: "4103.85"}
+
+    def test_every_spelling(self):
+        self.assertEqual(set(OCR_HEADERS), set(self.EXPECTED))
+        width = max(len(v) for v in OCR_HEADERS.values())
+        for i in range(width):
+            # One table per spelling variant; columns with fewer variants reuse the first.
+            row = {hs[min(i, len(hs) - 1)]: self.VALUES[no] for no, hs in OCR_HEADERS.items()}
+            ln = parse("", [[row]]).purchase_lines
+            self.assertEqual(len(ln), 1, list(row))
+            for no, (field, expected) in self.EXPECTED.items():
+                self.assertEqual(getattr(ln[0], field), expected, (no, list(row)))
+
+    def test_each_header_alone(self):
+        from bill_extractor.parser import _resolve_columns
+        for no, headers in OCR_HEADERS.items():
+            for h in headers:
+                self.assertTrue(any(_resolve_columns([h]).values()), (no, h))
 
 
 class Catalog(unittest.TestCase):
