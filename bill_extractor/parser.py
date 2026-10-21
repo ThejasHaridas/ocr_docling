@@ -168,6 +168,9 @@ def parse_seller(markdown: str, gstins: List[str]) -> Party:
     sc = STATE_CODE_RE.search(markdown)
     if sc:
         party.state_code = sc.group(1)
+    lines = _lines(markdown)
+    party.dl_no = _value_after_label(lines, ["dl no", "d.l. no", "dl"])
+    party.fssai = _value_after_label(lines, ["fssai", "fssai no"])
     return party
 
 
@@ -179,7 +182,7 @@ def _seller_name(markdown: str) -> Optional[str]:
     """
     counts: Dict[str, int] = {}
     for raw in markdown.splitlines():
-        line = raw.strip()
+        line = re.sub(r"^for\s+", "", raw.strip(), flags=re.IGNORECASE)  # "For <SELLER>" signature
         if not re.fullmatch(r"[A-Z][A-Z .&'-]{3,40}", line):
             continue
         low = line.lower()
@@ -191,7 +194,10 @@ def _seller_name(markdown: str) -> Optional[str]:
         repeated.sort(key=lambda x: (-x[1], -len(x[0])))
         return repeated[0][0]
     for raw in _lines(markdown):
-        if not _looks_like_label(raw) and re.search(r"[A-Za-z]", raw):
+        low = raw.lower()
+        if (not _looks_like_label(raw) and re.search(r"[A-Za-z]", raw)
+                and not any(sw in low for sw in _SELLER_NAME_STOPWORDS)
+                and not re.fullmatch(r"page\s*\d+\s*of\s*\d+", low)):
             return raw
     return None
 
@@ -235,9 +241,42 @@ def parse_parties(markdown: str, gstins: List[str],
     bill_block = _grab_block(markdown, r"bill\s*to")
     ship_block = _grab_block(markdown, r"ship\s*to")
 
+    if not bill_block and bill_gstin:
+        bill_block = _block_before_gstin(markdown, bill_gstin)
     bill_to = _party_from_block(bill_block, bill_gstin) if bill_block else Party(gstin=bill_gstin)
     ship_to = _party_from_block(ship_block, ship_gstin) if ship_block else Party(gstin=ship_gstin)
     return bill_to, ship_to
+
+
+_SELLER_FIELD_RE = re.compile(
+    r"e-?mail|gstin|\bpan\b|fssai|msme|\bdl\s*no|tax\s*invoice|page\s*\d", re.IGNORECASE)
+
+
+def _block_before_gstin(markdown: str, gstin: str, max_lines: int = 5) -> Optional[str]:
+    """Customer block on unlabelled layouts (BlueFox): name + address above its GSTIN.
+
+    Walks up from the GSTIN line until a line belonging to the seller header
+    (email, GSTIN, PAN, FSSAI, DL no...). A leading account code ("13172 - ")
+    is dropped from the name.
+    """
+    lines = _lines(markdown)
+    idx = next((i for i, l in enumerate(lines) if gstin in l.upper()), None)
+    if idx is None:
+        return None
+    block: List[str] = []
+    for line in reversed(lines[max(0, idx - max_lines):idx]):
+        if _SELLER_FIELD_RE.search(line):
+            break
+        block.insert(0, line)
+    if not block:
+        return None
+    block[0] = re.sub(r"^\d+\s*-\s*", "", block[0])
+    # Only trust it when the top line reads like a company name, not a table
+    # header or a labelled field from jumbled text.
+    if (not re.fullmatch(r"[A-Z][A-Z .&'()-]{3,40}", block[0])
+            or re.search(r"\b(amt|gst|qty|rate|mrp|exp|total|hsn|batch)\b", block[0], re.IGNORECASE)):
+        return None
+    return "\n".join(block)
 
 
 def _grab_block(markdown: str, label_pattern: str, max_lines: int = 8) -> Optional[str]:
@@ -336,7 +375,8 @@ def _match_col(headers: List[str], *keywords: str) -> Optional[str]:
 
 def _is_tax_table(headers: List[str]) -> bool:
     joined = " ".join(_norm(h) for h in headers)
-    return ("cgst" in joined or "sgst" in joined or "igst" in joined) and "hsn" in joined
+    return ("cgst" in joined or "sgst" in joined or "igst" in joined) and (
+        "hsn" in joined or "taxable" in joined)
 
 
 def _is_line_item_table(headers: List[str]) -> bool:
@@ -508,16 +548,28 @@ def parse_tax_summary(tables: List[List[Dict[str, Any]]]) -> List[TaxLine]:
         if not _is_tax_table(headers):
             continue
         col_hsn = _match_col(headers, "hsn", "sac")
+        col_slab = None if col_hsn else _match_col(headers, "tax", "gst")
         col_tax = _match_col(headers, "taxable")
         col_cgst = _match_col(headers, "cgst")
         col_sgst = _match_col(headers, "sgst")
         col_igst = _match_col(headers, "igst")
+
+        def rate_amount(row: Dict[str, Any], col: Optional[str]) -> tuple:
+            rate, amount = _split_rate_amount(_get(row, col))
+            if amount is None and col is not None:
+                # Rate-only cell ("@2.5%"): the amount is in the next ("AMT") column.
+                nxt = headers.index(col) + 1
+                if nxt < len(headers) and "amt" in _norm(headers[nxt]):
+                    amount = to_float(_get(row, headers[nxt]))
+            return rate, amount
+
         for row in rows:
-            cgst_rate, cgst_amt = _split_rate_amount(_get(row, col_cgst))
-            sgst_rate, sgst_amt = _split_rate_amount(_get(row, col_sgst))
-            igst_rate, igst_amt = _split_rate_amount(_get(row, col_igst))
+            cgst_rate, cgst_amt = rate_amount(row, col_cgst)
+            sgst_rate, sgst_amt = rate_amount(row, col_sgst)
+            igst_rate, igst_amt = rate_amount(row, col_igst)
+            slab = _get(row, col_slab)
             line = TaxLine(
-                hsn_sac=_get(row, col_hsn),
+                hsn_sac=_get(row, col_hsn) or (slab.strip("@ ") if slab else None),
                 taxable_amount=to_float(_get(row, col_tax)),
                 cgst_rate=cgst_rate,
                 cgst_amount=cgst_amt,
@@ -575,7 +627,7 @@ def parse_totals(markdown: str, tables: List[List[Dict[str, Any]]]) -> Totals:
     totals.grand_total = _amount_for(text, r"(?:grand\s*total|net\s*amount|net\s*payable)")
     totals.taxable_amount = _amount_for(text, r"(?:taxable\s*amount|sales\s*value|taxable\s*amt)")
     totals.discount = _amount_for(text, r"^\s*(?:discount|bill\s*disc)")
-    totals.round_off = _amount_for(text, r"(?:round\s*off|r/?\.?\s*of)")
+    totals.round_off = _amount_for(text, r"(?:round\s*off|r/?\.?\s*of|write\s*off)")
     totals.cess = _amount_for(text, r"cess")
     totals.sgst = _amount_for(text, r"(?:state\s*gst|sgst)")
     totals.cgst = _amount_for(text, r"(?:central\s*gst|cgst)")
@@ -584,14 +636,20 @@ def parse_totals(markdown: str, tables: List[List[Dict[str, Any]]]) -> Totals:
 
     # "TOTAL ITEM. 15 for 3" -> total_qty 15, total_items 3.
     m = re.search(r"total\s*items?\.?\s*(\d+)\s*for\s*(\d+)", text, re.IGNORECASE)
+    labelled_qty = re.search(r"\btot(?:al)?\.?\s*qty\s*[:.]?\s*(\d+(?:\.\d+)?)", text, re.IGNORECASE)
     if m:
         totals.total_qty = to_float(m.group(1))
         totals.total_items = to_float(m.group(2))
+    elif labelled_qty:  # "Tot Items : 3   Tot Qty : 12"
+        totals.total_qty = to_float(labelled_qty.group(1))
+        items = re.search(r"\btot(?:al)?\.?\s*items?\s*[:.]?\s*(\d+)\b", text, re.IGNORECASE)
+        if items:
+            totals.total_items = to_float(items.group(1))
     else:
         # A plain "Total <qty> <amount>" row (first template).
         for line in text.splitlines():
             if re.search(r"\btotal\b", line, re.IGNORECASE) and not re.search(
-                r"grand|taxable|gst|net|item", line, re.IGNORECASE
+                r"grand|taxable|gst|net|item|sub\s*total", line, re.IGNORECASE
             ):
                 nums = [to_float(n) for n in re.findall(r"\d[\d,]*\.?\d*", line)]
                 nums = [n for n in nums if n is not None]
@@ -661,6 +719,15 @@ def _reconcile_totals(invoice: Invoice) -> None:
             item_sum = sum(i.value for i in invoice.line_items if i.value is not None)
             if item_sum:
                 invoice.totals.taxable_amount = round(item_sum, 2)
+    # Only trust per-slab GST sums when the summary covers the whole taxable amount.
+    slab_taxable = sum(t.taxable_amount or 0 for t in invoice.tax_summary)
+    complete = (invoice.totals.taxable_amount is not None
+                and abs(slab_taxable - invoice.totals.taxable_amount) < 0.05)
+    for key in ("sgst", "cgst", "igst"):
+        if complete and getattr(invoice.totals, key) is None:
+            amounts = [getattr(t, f"{key}_amount") for t in invoice.tax_summary]
+            if any(a is not None for a in amounts):
+                setattr(invoice.totals, key, round(sum(a for a in amounts if a is not None), 2))
     if invoice.totals.total_qty is None and invoice.line_items:
         qty_sum = sum(i.qty for i in invoice.line_items if i.qty is not None)
         if qty_sum:

@@ -10,7 +10,7 @@
     "email": "unimji@yahoo.co.in",
     "gstin": "32AACFU3718K1Z7",
     "pan": "AACFU3718K",
-    "dl_no": null,
+    "dl_no": "KL-MLP-135061, KL-MLP-135062",
     "fssai": null
   },
   "bill_to": {
@@ -54,7 +54,7 @@
   "tax_summary": [],
   "totals": {
     "total_items": null,
-    "total_qty": null,
+    "total_qty": 3.0,
     "taxable_amount": null,
     "discount": null,
     "sgst": null,

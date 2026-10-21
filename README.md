@@ -157,6 +157,7 @@ The rule-based layer is designed to generalise across invoice layouts. The
 | `chempharma_invoice.pdf` | Chem Pharma (pharma distributor, digital PDF) | `chempharma_invoice.json` |
 | `fatima_invoice.pdf` | Fatima Drug Lines (pharma distributor, digital PDF) | `fatima_invoice.json` |
 | `unicorn_invoice.pdf` | Unicorn Enterprises (pharma distributor, digital PDF) | `unicorn_invoice.json` |
+| `fatima_house_invoice.jpg` | Fatima Drug House, BlueFox software (pharma distributor, photo) | `fatima_house_invoice.json` (from the Docling-shaped fixture in `tests/fixture_fatima_house.py`) |
 
 Regenerate them with:
 

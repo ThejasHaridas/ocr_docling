@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bill_extractor.column_mapping import COLUMNS, OCR_HEADERS, coverage
 from bill_extractor.parser import parse, parse_line_items
@@ -151,6 +152,40 @@ class OcrHeaders(unittest.TestCase):
         for no, headers in OCR_HEADERS.items():
             for h in headers:
                 self.assertTrue(any(_resolve_columns([h]).values()), (no, h))
+
+
+class BlueFoxFatimaHouse(unittest.TestCase):
+    """examples/fatima_house_invoice.jpg (Fatima Drug House, invoice 127191)."""
+
+    def setUp(self):
+        from fixture_fatima_house import MARKDOWN, TABLES
+        self.inv = parse(MARKDOWN, TABLES)
+
+    def test_header(self):
+        inv = self.inv
+        self.assertEqual((inv.invoice_no, inv.invoice_date), ("127191", "28/11/2025"))
+        self.assertEqual((inv.seller.name, inv.seller.gstin), ("FATIMA DRUG HOUSE", "32AFJPK9601F2ZN"))
+        self.assertEqual(inv.seller.fssai, "11323010001083")
+        self.assertEqual((inv.bill_to.name, inv.bill_to.gstin, inv.bill_to.pin),
+                         ("ROSE MEDICALS", "32AYXPC3443N1Z2", "679331"))
+
+    def test_lines(self):
+        lines = self.inv.purchase_lines
+        self.assertEqual([ln.batch for ln in lines], ["IA01199A", "25S2GCA743", "ZAFQ2512", "ZAFQ2513"])
+        self.assertEqual([ln.packs for ln in lines], [5.0, 4.0, 1.0, 2.0])
+        self.assertEqual([ln.packSize for ln in lines], [10, 15, 15, 15])
+        self.assertEqual(round(sum(ln.purchaseAmount for ln in lines), 2), 1580.15)
+        self.assertEqual((lines[0].mrpPerPack, lines[0].ratePerPack, lines[0].taxPercent),
+                         (206.18, 157.09, 5.0))
+        self.assertIsNone(lines[0].freePacks)  # "Sch Qty" is blank, not the qty
+
+    def test_totals_and_tax(self):
+        t = self.inv.totals
+        self.assertEqual((t.total_items, t.total_qty), (3.0, 12.0))
+        self.assertEqual((t.taxable_amount, t.sgst, t.cgst, t.tax_amount), (1580.15, 39.5, 39.5, 79.01))
+        self.assertEqual((t.round_off, t.grand_total), (-0.16, 1659.0))
+        tax = self.inv.tax_summary
+        self.assertEqual([(x.hsn_sac, x.sgst_rate, x.sgst_amount) for x in tax], [("5%", 2.5, 39.5)])
 
 
 class Catalog(unittest.TestCase):
